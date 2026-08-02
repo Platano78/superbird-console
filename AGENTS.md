@@ -6,10 +6,14 @@ On entry: read this map → route to the area for the task → load ONLY that ar
 ## What this is
 
 A discontinued **Spotify Car Thing** (superbird; 800×480 touchscreen, dial, 4 preset buttons)
-turned into a **Claude Code monitoring + permission-answering surface**. Firmware base is
-**DeskThing**; host is Windows 11 + WSL2. The one thing that matters most: the upstream
-`claude-thing` project is Mac-only, so we keep its Node daemon + `claude.*` protocol and
-rebuild the device UI as a DeskThing app — we do NOT fork the firmware.
+turned into a **Claude Code monitoring + permission-answering surface**. Host is Windows 11 + WSL2.
+
+**Working as of 2026-08-02.** The device runs our own web app from its own disk
+(`device/`), connecting straight to the `claude-thing` daemon over `adb reverse`.
+**DeskThing is NOT required** — dropped as a runtime dependency (D-f18d6e0d, amending
+D-7c50e23a). Firmware stays `8.9.2-thinglabs`, which is stock Spotify + ADB enabled; no
+reflash was ever needed. We keep upstream's Node daemon + `claude.*` protocol and do NOT
+fork the firmware. Day-to-day operation → `docs/operations-runbook.md`.
 
 ## Areas (route by task — load Inputs, skip the rest)
 
@@ -17,6 +21,7 @@ rebuild the device UI as a DeskThing app — we do NOT fork the firmware.
 |---|---|---|
 | **Where we are / what's next / blocked** | the internal status doc | the three reference docs |
 | **Which firmware, why DeskThing, what we keep from upstream** | `docs/firmware-decision.md` | runbook, protocol, status |
+| **Running it: services, hooks, deploying a UI change, reading the device screen** | `docs/operations-runbook.md` | flashing, firmware-decision |
 | **Flashing, boot mode, drivers, USB not enumerating** | `docs/flashing-runbook.md` | firmware-decision, protocol |
 | **Message contract, daemon endpoints, session/usage shapes** | `docs/claude-protocol.md` | flashing, firmware-decision |
 | **What ports from/to WigiDash** | `docs/claude-protocol.md` §"Why this beats…", then `../WigiDash_Scripts/AGENTS.md` | flashing, firmware-decision |
