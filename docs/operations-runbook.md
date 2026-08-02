@@ -1,5 +1,17 @@
 # Operations runbook — how the Car Thing surface runs
 
+> ✅ **The core goal is met (2026-08-02).** Real permission prompts from a real session were
+> answered from the device while the owner was away from the keyboard:
+> ```
+> 01:22:36  PB permission bfde5ae8 -> allow   (…/render/vehicles/types.ts, 3s)
+> 01:22:45  PB permission 553b51fd -> allow   (…/player/VehicleCamera.ts,  2s)
+> 01:22:59  PB permission 5f40bd37 -> allow   (…/player/VehiclePanel.ts,   8s)
+> 01:23:06  PB permission b761b91f -> allow   (…/app/deploy.ts,          1.6s)
+> 01:23:47  PB permission 92bf5956 -> timeout (unanswered → fell through at 30s)
+> ```
+> The timeout line is the 30 s hold working as intended: unanswered prompts return to the
+> terminal instead of stalling it. At upstream's 595 s that terminal sits silent for ~10 minutes.
+
 Standing architecture after **D-f18d6e0d** (DeskThing dropped as a runtime dependency).
 
 ```
