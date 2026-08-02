@@ -5,3 +5,5 @@
 html, body, #root { height: 100%; margin: 0; background: #000; }
 /* kiosk: no text selection or long-press callout on a touch panel */
 * { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+/* touch panel scrolls by dragging — a visible scrollbar is just clutter */
+::-webkit-scrollbar { display: none; }
