@@ -98,6 +98,29 @@ adb shell "mount -o remount,rw / && cp /etc/supervisord.conf.stock /etc/supervis
 The stock Spotify webapp was never overwritten; it is still at
 `/usr/share/qt-superbird-app/webapp/`.
 
+## ⚠ No permission cards? Check the permission MODE first
+
+`PermissionRequest` only fires when Claude Code actually **asks**. In
+`bypassPermissions` (and largely in `acceptEdits`) it never asks, so **no card can ever appear**
+— nothing is broken.
+
+Observed 2026-08-02: all six live sessions were `mode=bypassPermissions`, which is the sane
+default for AFK and `/crew` work. Diagnose before assuming a defect:
+
+```bash
+journalctl --user -u claude-thing.service --since "10 min ago" | grep " IN "   # hooks arriving?
+curl -s http://127.0.0.1:8790/status                                           # sessions/hooks
+# and dump per-session modes over the WS: claude.sessions.list -> permissionMode
+```
+
+If `IN POST /hook` lines are flowing and `sessions` is climbing, the plumbing is fine and the
+answer is the mode. To exercise the path, `Shift+Tab` a session to **default** mode and run
+something outside the allowlist.
+
+**Consequence worth stating plainly:** if you drive everything in bypass, the Car Thing is a
+*monitoring* surface. The permission-answering half — the part that makes it more than a
+dashboard — only earns its keep on sessions that ask.
+
 ## Known open
 
 - **`claude.usage.get` is broken here** — returns `{stale:true, error:"could not parse /usage output"}`.
