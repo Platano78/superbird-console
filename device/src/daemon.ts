@@ -10,7 +10,7 @@
  *   - bridge.hello must be the first frame
  */
 
-import type { Snapshot, Ask } from './protocol'
+import type { Snapshot, Ask, Usage } from './protocol'
 
 const URL = `ws://${location.hostname || '127.0.0.1'}:8790/ws`
 
@@ -18,6 +18,7 @@ export type State = {
   connected: boolean
   snapshot: Snapshot | null
   asks: Ask[]
+  usage: Usage | null
   /** daemon clock minus device clock — the device has no RTC and no NTP */
   offsetMs: number
 }
@@ -27,7 +28,7 @@ export class Daemon {
   private nextId = 0
   private pending = new Map<number, (v: unknown, err?: string) => void>()
 
-  state: State = { connected: false, snapshot: null, asks: [], offsetMs: 0 }
+  state: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0 }
   onState: ((s: State) => void) | null = null
 
   private emit = () => this.onState?.({ ...this.state })
@@ -65,6 +66,7 @@ export class Daemon {
       if (m.topic === 'claude.sessions.update') this.setSnapshot(m.data as Snapshot)
       // Only queue topics need a re-fetch; session ticks fire constantly and
       // re-fetching on each one storms the daemon.
+      if (m.topic === 'claude.usage.update') { this.state.usage = m.data as Usage; this.emit(); return }
       if (/permission|question/.test(m.topic || '')) void this.refreshQueue()
       else this.emit()
       return
@@ -93,6 +95,9 @@ export class Daemon {
 
   async refresh() {
     this.setSnapshot((await this.request('claude.sessions.list')) as Snapshot)
+    // The daemon pushes claude.usage.update once a minute; fetch once up front
+    // so the rail is populated before the first push lands.
+    try { this.state.usage = (await this.request('claude.usage.get')) as Usage } catch { /* rail hides */ }
     await this.refreshQueue()
   }
 

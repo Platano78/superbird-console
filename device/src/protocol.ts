@@ -66,6 +66,33 @@ export type Ask = {
   multiSelect?: boolean
 }
 
+/**
+ * Plan limits, parsed by the daemon from `claude -p "/usage"`.
+ *
+ * ⚠ That command only returns limits when Claude Code runs against the
+ * claude.ai SUBSCRIPTION. With ANTHROPIC_API_KEY set it switches to API mode
+ * and prints a cost summary instead, which is why usage read
+ * {stale:true,"could not parse /usage output"} until the service stripped the key.
+ */
+export type UsageLimit = {
+  /** 'session' (the 5h window) · 'week-all-models-' · 'week-fable-' */
+  key: string
+  /** 'SESSION' · 'WEEK · ALL MODELS' · 'WEEK · FABLE' */
+  label: string
+  /** 0..1 */
+  used: number
+  /** e.g. "resets Aug 2, 3:29am" */
+  detail: string
+}
+
+export type Usage = {
+  updatedLabel?: string
+  subscription?: string
+  limits?: UsageLimit[]
+  stale?: boolean
+  error?: string
+}
+
 /** What the app server pushes to the device client. */
 export type ClientState = {
   connected: boolean

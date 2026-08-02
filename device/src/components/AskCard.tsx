@@ -30,7 +30,8 @@ export function AskCard({ ask, nowMs, onPermission, onQuestion }: Props) {
   const urgent = left !== null && left <= 60
 
   return (
-    <div className="flex h-full w-full flex-col justify-between p-5">
+    // riseIn fires once per ask (keyed on id) — the motion IS the notification.
+    <div key={ask.id} className="flex h-full w-full animate-riseIn flex-col justify-between p-5">
       <div className="min-h-0">
         <div className="flex items-baseline justify-between">
           <span className="text-xl font-semibold text-amber-300">{ask.sessionName}</span>

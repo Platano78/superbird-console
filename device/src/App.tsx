@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Daemon, type State } from './daemon'
 import { AskCard } from './components/AskCard'
 import { SessionGrid } from './components/SessionGrid'
+import { UsageRail } from './components/UsageRail'
 
-const EMPTY: State = { connected: false, snapshot: null, asks: [], offsetMs: 0 }
+const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0 }
 
 export default function App() {
   const [state, setState] = useState<State>(EMPTY)
@@ -46,9 +47,12 @@ export default function App() {
             onQuestion={(_id, optionIndex) => void daemon.current?.answer(ask, 'allow', optionIndex)}
           />
         ) : (
-          <SessionGrid sessions={state.snapshot?.sessions ?? []} />
+          <SessionGrid sessions={state.snapshot?.sessions ?? []} nowMs={nowMs} />
         )}
       </main>
+
+      {/* Hidden while an ask is up — answering is the whole screen's job then. */}
+      {!ask && <UsageRail usage={state.usage} />}
     </div>
   )
 }

@@ -123,8 +123,14 @@ dashboard — only earns its keep on sessions that ask.
 
 ## Known open
 
-- **`claude.usage.get` is broken here** — returns `{stale:true, error:"could not parse /usage output"}`.
-  It shells to `claude -p "/usage"` and parses stdout. Host-side, unrelated to the device.
+- ~~`claude.usage.get` is broken~~ ✅ **FIXED 2026-08-02.** Root cause was **`ANTHROPIC_API_KEY`
+  in the daemon's environment.** With a key set, Claude Code runs in API mode and `/usage`
+  prints a cost summary (`Total cost: $0.00`) instead of the plan-limits panel — so the parser,
+  which was correct all along, had nothing to match. The service now runs
+  `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN`, and all three limits parse:
+  `SESSION` (the 5h window), `WEEK · ALL MODELS`, and `WEEK · FABLE` (per-model).
+  **Generalisable:** if a `claude` subprocess behaves as though there is no subscription,
+  check the auth env before suspecting the caller.
 - **`claude.question.answer` is UNVERIFIED.** Upstream answers questions by typing into the focused
   terminal via macOS Accessibility APIs; no Windows equivalent ships. Wiring is correct and it now
   fails visibly rather than silently, but it has never been seen to succeed.

@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/daemon.ts","./src/main.tsx","./src/protocol.ts","./src/components/AskCard.tsx","./src/components/SessionGrid.tsx"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/daemon.ts","./src/main.tsx","./src/protocol.ts","./src/components/AskCard.tsx","./src/components/SessionGrid.tsx","./src/components/UsageRail.tsx"],"version":"5.9.3"}
