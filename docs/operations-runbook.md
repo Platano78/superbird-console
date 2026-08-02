@@ -29,18 +29,20 @@ Nothing else needs to be running. **DeskThing is not involved.**
 |---|---|
 | `claude-thing.service` | the daemon, from `~/claude-thing/daemon` |
 | `car-thing-adb.service` | re-asserts `adb reverse` every 30 s (`scripts/keep-adb-reverse.sh`) |
+| `car-thing-backlight.service` | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
 
 ```bash
-systemctl --user status claude-thing.service car-thing-adb.service
+systemctl --user status claude-thing.service car-thing-adb.service car-thing-backlight.service
 systemctl --user restart claude-thing.service
 journalctl --user -u claude-thing.service -n 50 --no-pager
 curl -s http://127.0.0.1:8790/status        # the one-line health check
 ```
 
 Healthy `/status` looks like:
-`{"sessions":5,...,"clients":{"car-thing":1},"sources":["poller","hooks"],"hooks":true}`
+`{"sessions":5,...,"clients":{"car-thing":1,"backlight":1},"sources":["poller","hooks"],"hooks":true}`
 
 - `clients.car-thing` — the device is connected. Missing → `adb reverse` is down.
+- `clients.backlight` — the backlight service's own WS client. Expected, not an intruder.
 - `sources` — `poller` needs `claude` on PATH; `hooks` needs settings.json entries.
 - `hooks:true` — the settings.json hooks are registered.
 
@@ -86,6 +88,108 @@ adb shell supervisorctl restart chromium
 ⚠ **`@vitejs/plugin-legacy` is REQUIRED**, not an optimisation — ES modules do not load over
 `file://` ("non-JavaScript MIME type of ''") and a default Vite build renders a **blank screen with
 no visible error**. On vite@5 use `@vitejs/plugin-legacy@^5` (v8 demands vite@8).
+
+## Backlight attention channel
+
+There is **no speaker**, so light is the only out-of-band signal. `scripts/backlight-daemon.mjs`
+watches the daemon over the same WS protocol the device uses and drives
+`/sys/class/backlight/aml-bl/brightness` (0–255) over `adb shell`.
+
+| State | Condition | Backlight |
+|---|---|---|
+| **ATTENTION** | `claude.queue.list` has ≥1 ask | pulse 90↔255, ~1.1 s cycle |
+| **ACTIVE** | any session `state === 'busy'` | steady 235 |
+| **IDLE** | otherwise | steady 60 |
+| *disconnected* | WS down | forced steady 235 |
+
+Plus an **edge-triggered** burst when a `week-*` limit crosses 90% — three quick full-range
+pulses, once. ⚠ Edge, not level: a weekly limit sits above 90% for *days*, so a level-triggered
+pulse would be intolerable and would drown out the ATTENTION signal that actually needs
+answering. Fired keys persist to `~/.local/state/car-thing/backlight.json` keyed by the limit's
+reset label, so a restart doesn't re-alert and a new period re-arms.
+
+**Disconnected goes bright, not dim or pulsing** — the light must never signal attention that
+nothing is backing.
+
+### ⚠ The stock ambient-light daemon fights you
+
+`sp-als-backlight` continuously re-drives the backlight toward its own ambient target. Measured:
+write 60, and it climbs back at **~26 units/sec** (`61, 74, 87, 100, 113…`). IDLE could never hold.
+
+It is **supervised** — `/etc/supervisord.conf` has `[program:backlight]` → `command=sp-als-backlight`
+with `autorestart=true`, so **`kill` is the wrong lever; it just respawns.** The right one:
+
+```bash
+adb shell "supervisorctl stop backlight"    # brightness then holds flat
+adb shell "supervisorctl start backlight"   # hand it back
+```
+
+The service does exactly this — stops it on startup, restarts it on SIGTERM — so
+`systemctl --user stop car-thing-backlight` leaves the device in **stock** condition. Nothing is
+written to `/etc/supervisord.conf`; `autostart=true` brings ALS back on reboot and the service
+re-takes it next run. That self-healing property is deliberate.
+
+⚠ `actual_brightness` does **not** read back what you wrote — the driver rounds (write 234 → read
+235; write 172 → read 173). Never assert exact equality on a readback.
+
+### Verifying it
+
+```bash
+node scripts/backlight-daemon.mjs --self-test   # walks every state on the real device, restores 235 + ALS
+```
+For a true end-to-end check, inject a permission (below) and sample brightness while it is
+pending — you should see the ramp, then a settle to 235 once answered.
+
+## Physical controls
+
+`gpio-keys` is `kbd`-handled, so Chromium receives the buttons as ordinary `keydown` events on
+`window`. The mapping was confirmed 2026-08-02 from two independent layers that agreed exactly —
+the kernel capability bitmap plus a real press captured at both the evdev and DOM level:
+
+| Control | evdev | `event.code` | Bound to |
+|---|---|---|---|
+| Preset 1 | `KEY_1` (2) | `Digit1` | **Allow** · question option 1 |
+| Preset 2 | `KEY_2` (3) | `Digit2` | question option 2 |
+| Preset 3 | `KEY_3` (4) | `Digit3` | question option 3 |
+| Preset 4 | `KEY_4` (5) | `Digit4` | **Deny** · question option 4 |
+| Dial press | `KEY_ENTER` (28) | `Enter` | **Allow** · question option 1 |
+| Back | `KEY_ESC` (1) | `Escape` | **deliberately inert** |
+| M / front | `KEY_M` (50) | `KeyM` | **deliberately inert** |
+
+⚠ **Back and M are unbound on purpose.** The back button sits where a hand lands when picking the
+device up, and a physical press answers a permission with no confirmation step. They are still
+logged, so a future session can see they arrive.
+
+Four guards in `device/src/useHardwareKeys.ts`, each preventing a real misfire:
+auto-repeat ignored (holding a button must not fire twice) · a **250 ms arm delay** after an ask
+appears (a press already in flight must not blind-answer a card that just popped) · **one answer
+per ask id** (the daemon round-trip is async and the card lingers) · a 150 ms `ring-2` flash on the
+control that fired, because `active:` states never trigger for key input.
+
+⚠ **The rotary dial's *rotation* is not bound and is not a listener job.** `rotary@0` reports
+`Handlers=event1` with **no `kbd`** — Chromium cannot see it. It needs an evdev→uinput bridge.
+
+### Debugging: `window.__klog`
+
+The app keeps a bounded 50-entry ring buffer of every key it sees, `{code,key,repeat,t,action}`,
+where `action` records the decision (`allow`, `deny`, `option:2`, `ignored:repeat`,
+`ignored:arming`, `ignored:already-answered`, `noop:no-ask`, `noop`). It is the only key-level
+feedback loop on this device — read it over CDP with `Runtime.evaluate`.
+
+### Injecting a real permission to test with
+
+`PermissionRequest` only fires when a session actually asks, and everything runs in
+`bypassPermissions` (see below). To exercise the whole chain without waiting for one, POST a real
+hook — this goes through the genuine bridge, queue, WS and device path:
+
+```bash
+curl -s --max-time 45 -X POST http://127.0.0.1:8790/hook \
+  -H 'Content-Type: application/json' \
+  -d '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"echo TEST"}}'
+```
+A card appears on the device; answering it returns `{"decision":{"behavior":"allow"}}` to the
+caller — exactly what Claude Code would act on — and the journal logs
+`PB permission <id> -> allow`. **That log line is the only proof that counts.**
 
 ## Seeing what the device actually shows
 
