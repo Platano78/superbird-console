@@ -3,6 +3,7 @@ import { Daemon, type State } from './daemon'
 import { AskCard } from './components/AskCard'
 import { SessionGrid } from './components/SessionGrid'
 import { UsageRail } from './components/UsageRail'
+import { useHardwareKeys } from './useHardwareKeys'
 
 const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0 }
 
@@ -25,6 +26,14 @@ export default function App() {
   const ask = state.asks[0]
   const nowMs = Date.now() + state.offsetMs
 
+  const onPermission = (_id: string, decision: 'allow' | 'deny') => {
+    if (ask) void daemon.current?.answer(ask, decision)
+  }
+  const onQuestion = (_id: string, optionIndex: number) => {
+    if (ask) void daemon.current?.answer(ask, 'allow', optionIndex)
+  }
+  const flash = useHardwareKeys({ ask, onPermission, onQuestion })
+
   return (
     <div className="flex h-screen w-screen flex-col bg-black text-white">
       <header className="flex items-center justify-between px-4 py-2 text-sm text-neutral-400">
@@ -43,8 +52,9 @@ export default function App() {
           <AskCard
             ask={ask}
             nowMs={nowMs}
-            onPermission={(_id, decision) => void daemon.current?.answer(ask, decision)}
-            onQuestion={(_id, optionIndex) => void daemon.current?.answer(ask, 'allow', optionIndex)}
+            onPermission={onPermission}
+            onQuestion={onQuestion}
+            flash={flash}
           />
         ) : (
           <SessionGrid sessions={state.snapshot?.sessions ?? []} nowMs={nowMs} />

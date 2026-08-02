@@ -21,7 +21,7 @@ fork the firmware. Day-to-day operation → `docs/operations-runbook.md`.
 |---|---|---|
 | **Where we are / what's next / blocked** | the internal status doc | the three reference docs |
 | **Which firmware, why DeskThing, what we keep from upstream** | `docs/firmware-decision.md` | runbook, protocol, status |
-| **Running it: services, hooks, deploying a UI change, reading the device screen** | `docs/operations-runbook.md` | flashing, firmware-decision |
+| **Running it: services, hooks, deploying a UI change, reading the device screen, physical buttons, backlight** | `docs/operations-runbook.md` | flashing, firmware-decision |
 | **Flashing, boot mode, drivers, USB not enumerating** | `docs/flashing-runbook.md` | firmware-decision, protocol |
 | **Message contract, daemon endpoints, session/usage shapes** | `docs/claude-protocol.md` | flashing, firmware-decision |
 | **What ports from/to WigiDash** | `docs/claude-protocol.md` §"Why this beats…", then `../WigiDash_Scripts/AGENTS.md` | flashing, firmware-decision |

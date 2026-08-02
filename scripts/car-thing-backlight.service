@@ -1,0 +1,16 @@
+[Unit]
+Description=Car Thing backlight attention channel
+After=claude-thing.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/youruser/project/car-thing
+# systemd user services do NOT inherit the shell PATH — see claude-thing.service
+# for the same gotcha. Node must be reachable by absolute PATH entry.
+Environment=PATH=/home/youruser/.local/bin:/home/youruser/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/youruser/.nvm/versions/node/v22.22.3/bin/node scripts/backlight-daemon.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

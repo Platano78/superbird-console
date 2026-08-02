@@ -1,10 +1,14 @@
 import type { Ask } from '../protocol'
+import type { FlashTarget } from '../useHardwareKeys'
 
 type Props = {
   ask: Ask
   nowMs: number
   onPermission: (requestId: string, decision: 'allow' | 'deny') => void
   onQuestion: (id: string, optionIndex: number) => void
+  /** The control a hardware key press just triggered — briefly highlighted so a
+   *  physical press gets the same visible confirmation a tap does. */
+  flash?: FlashTarget | null
 }
 
 /**
@@ -19,7 +23,7 @@ type Props = {
  * doc says 55s while the daemon holds ~595s, so a hard-coded figure expires the
  * prompt ~10x early while the session is still genuinely waiting.
  */
-export function AskCard({ ask, nowMs, onPermission, onQuestion }: Props) {
+export function AskCard({ ask, nowMs, onPermission, onQuestion, flash }: Props) {
   const isQuestion = ask.kind === 'question'
   // Questions carry no timeoutMs — they live until the terminal prompt goes.
   // Rendering a countdown for them produced NaN:NaN on the device.
@@ -62,7 +66,9 @@ export function AskCard({ ask, nowMs, onPermission, onQuestion }: Props) {
             <button
               key={i}
               onClick={() => onQuestion(ask.id, i)}
-              className="rounded-xl bg-neutral-800 p-3 text-left active:bg-neutral-700"
+              className={`rounded-xl bg-neutral-800 p-3 text-left active:bg-neutral-700 ${
+                flash?.kind === 'option' && flash.index === i ? 'ring-2 ring-white' : ''
+              }`}
             >
               <div className="text-lg font-semibold text-white">{opt.label}</div>
               {opt.description && (
@@ -75,13 +81,17 @@ export function AskCard({ ask, nowMs, onPermission, onQuestion }: Props) {
         <div className="flex gap-4">
           <button
             onClick={() => onPermission(ask.id, 'deny')}
-            className="h-24 flex-1 rounded-2xl bg-neutral-800 text-2xl font-semibold text-neutral-200 active:bg-neutral-700"
+            className={`h-24 flex-1 rounded-2xl bg-neutral-800 text-2xl font-semibold text-neutral-200 active:bg-neutral-700 ${
+              flash?.kind === 'permission' && flash.decision === 'deny' ? 'ring-2 ring-white' : ''
+            }`}
           >
             Deny
           </button>
           <button
             onClick={() => onPermission(ask.id, 'allow')}
-            className="h-24 flex-[2] rounded-2xl bg-emerald-600 text-3xl font-bold text-white active:bg-emerald-500"
+            className={`h-24 flex-[2] rounded-2xl bg-emerald-600 text-3xl font-bold text-white active:bg-emerald-500 ${
+              flash?.kind === 'permission' && flash.decision === 'allow' ? 'ring-2 ring-white' : ''
+            }`}
           >
             Allow
           </button>
