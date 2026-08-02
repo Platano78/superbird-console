@@ -21,6 +21,11 @@ export type State = {
   usage: Usage | null
   /** daemon clock minus device clock — the device has no RTC and no NTP */
   offsetMs: number
+  /** Last ask seen per session, kept after it leaves the live queue (e.g. it
+   *  expired) — bounded to one entry per session, dropped once that session
+   *  ends. Lets a session-detail view show what it was even if answering it
+   *  is no longer possible. */
+  lastAskBySession: Record<string, Ask>
 }
 
 export class Daemon {
@@ -28,7 +33,7 @@ export class Daemon {
   private nextId = 0
   private pending = new Map<number, (v: unknown, err?: string) => void>()
 
-  state: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0 }
+  state: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0, lastAskBySession: {} }
   onState: ((s: State) => void) | null = null
 
   private emit = () => this.onState?.({ ...this.state })
@@ -81,6 +86,17 @@ export class Daemon {
   private setSnapshot(s: Snapshot) {
     this.state.snapshot = s
     if (typeof s?.serverNowMs === 'number') this.state.offsetMs = s.serverNowMs - Date.now()
+    // Bound the cache to live sessions. Prune against the snapshot's own id set
+    // rather than only on `ended` — a session that simply stops appearing never
+    // shows up as ended, so an ended-only sweep leaks its entry for the life of
+    // the process, and this device runs for days. Skipped when the snapshot
+    // carries no session list, so a transient empty frame can't wipe the cache.
+    if (s?.sessions?.length) {
+      const live = new Set(s.sessions.filter((x) => !x.ended).map((x) => x.id))
+      for (const id of Object.keys(this.state.lastAskBySession)) {
+        if (!live.has(id)) delete this.state.lastAskBySession[id]
+      }
+    }
   }
 
   request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -104,6 +120,9 @@ export class Daemon {
   async refreshQueue() {
     try {
       this.state.asks = ((await this.request('claude.queue.list')) as { asks: Ask[] }).asks || []
+      for (const a of this.state.asks) {
+        if (a.sessionId) this.state.lastAskBySession[a.sessionId] = a
+      }
     } catch { /* keep the last known queue rather than blanking the screen */ }
     this.emit()
   }
