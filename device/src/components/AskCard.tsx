@@ -5,14 +5,21 @@ type Props = {
   ask: Ask
   nowMs: number
   onPermission: (requestId: string, decision: 'allow' | 'deny') => void
-  onQuestion: (id: string, optionIndex: number) => void
   /** The control a hardware key press just triggered — briefly highlighted so a
    *  physical press gets the same visible confirmation a tap does. */
   flash?: FlashTarget | null
+  /** True when `ask` is no longer live — e.g. a session-detail view showing the
+   *  last-seen ask after it expired from the queue. No buttons, just what it
+   *  was and a pointer to the terminal. */
+  readOnly?: boolean
 }
 
 /**
- * A pending ask takes the whole screen. The device exists to answer these.
+ * A pending ask takes the whole screen. The device exists to answer these —
+ * except questions, which are display-only here: `claude.question.answer`
+ * drives AppleScript on macOS to type into Terminal.app, so nothing on this
+ * device can actually answer one (confirmed live: two answers sent, neither
+ * took effect, only resolved 42s later from the terminal).
  *
  * MUST branch on `kind`: the queue merges permissions and questions, and they
  * take different daemon methods. Answering a question with the permission
@@ -23,7 +30,7 @@ type Props = {
  * doc says 55s while the daemon holds ~595s, so a hard-coded figure expires the
  * prompt ~10x early while the session is still genuinely waiting.
  */
-export function AskCard({ ask, nowMs, onPermission, onQuestion, flash }: Props) {
+export function AskCard({ ask, nowMs, onPermission, flash, readOnly = false }: Props) {
   const isQuestion = ask.kind === 'question'
   // Questions carry no timeoutMs — they live until the terminal prompt goes.
   // Rendering a countdown for them produced NaN:NaN on the device.
@@ -61,28 +68,34 @@ export function AskCard({ ask, nowMs, onPermission, onQuestion, flash }: Props) 
       </div>
 
       {isQuestion ? (
-        <div className="grid grid-cols-2 gap-3">
-          {(ask.options ?? []).map((opt, i) => (
-            <button
-              key={i}
-              onClick={() => onQuestion(ask.id, i)}
-              className={`rounded-xl bg-neutral-800 p-3 text-left active:bg-neutral-700 ${
-                flash?.kind === 'option' && flash.index === i ? 'ring-2 ring-white' : ''
-              }`}
-            >
-              <div className="text-lg font-semibold text-white">{opt.label}</div>
-              {opt.description && (
-                <div className="truncate text-sm text-neutral-400">{opt.description}</div>
-              )}
-            </button>
-          ))}
+        // Read-only: this device cannot drive claude.question.answer (macOS
+        // AppleScript only) — see the note above. Buttons that provably
+        // cannot work are worse than no buttons.
+        <div>
+          <div className="grid grid-cols-2 gap-3">
+            {(ask.options ?? []).map((opt, i) => (
+              <div key={i} className="rounded-xl bg-neutral-800/60 p-3 text-left opacity-70">
+                <div className="text-lg font-semibold text-white">{opt.label}</div>
+                {opt.description && (
+                  <div className="truncate text-sm text-neutral-400">{opt.description}</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 text-center text-sm uppercase tracking-wide text-neutral-500">
+            Answer in the terminal
+          </div>
+        </div>
+      ) : readOnly ? (
+        <div className="rounded-xl bg-neutral-800/60 p-4 text-center text-lg text-neutral-400">
+          This request expired — answer in the terminal
         </div>
       ) : (
         <div className="flex gap-4">
           <button
             onClick={() => onPermission(ask.id, 'deny')}
             className={`h-24 flex-1 rounded-2xl bg-neutral-800 text-2xl font-semibold text-neutral-200 active:bg-neutral-700 ${
-              flash?.kind === 'permission' && flash.decision === 'deny' ? 'ring-2 ring-white' : ''
+              flash?.decision === 'deny' ? 'ring-2 ring-white' : ''
             }`}
           >
             Deny
@@ -90,7 +103,7 @@ export function AskCard({ ask, nowMs, onPermission, onQuestion, flash }: Props) 
           <button
             onClick={() => onPermission(ask.id, 'allow')}
             className={`h-24 flex-[2] rounded-2xl bg-emerald-600 text-3xl font-bold text-white active:bg-emerald-500 ${
-              flash?.kind === 'permission' && flash.decision === 'allow' ? 'ring-2 ring-white' : ''
+              flash?.decision === 'allow' ? 'ring-2 ring-white' : ''
             }`}
           >
             Allow

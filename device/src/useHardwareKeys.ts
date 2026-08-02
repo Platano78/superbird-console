@@ -10,7 +10,6 @@ export type KlogEntry = { code: string; key: string; repeat: boolean; t: number;
 
 const KLOG_MAX = 50
 const ARM_DELAY_MS = 250
-const DIGIT_INDEX: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 }
 const BOUND_CODES = new Set(['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Enter'])
 
 function klog(e: KeyboardEvent, action: string) {
@@ -19,26 +18,29 @@ function klog(e: KeyboardEvent, action: string) {
   if (log.length > KLOG_MAX) log.splice(0, log.length - KLOG_MAX)
 }
 
-export type FlashTarget = { kind: 'permission'; decision: 'allow' | 'deny' } | { kind: 'option'; index: number }
-export type KeyAction = { type: 'allow' } | { type: 'deny' } | { type: 'noop' } | { type: 'option'; index: number }
+export type FlashTarget = { decision: 'allow' | 'deny' }
+export type KeyAction = { type: 'allow' } | { type: 'deny' } | { type: 'noop' }
 
-/** Pure decision logic, no side effects or timing guards — independently checkable. */
+/**
+ * Pure decision logic, no side effects or timing guards — independently
+ * checkable. Questions are read-only on this device (see AskCard —
+ * `claude.question.answer` only works via macOS AppleScript, which doesn't
+ * exist here), so they always resolve to noop; only permissions are
+ * hardware-answerable.
+ */
 export function resolveKeyAction(code: string, ask: Ask | undefined): KeyAction {
-  if (!ask) return { type: 'noop' }
-  if (ask.kind === 'permission') {
-    if (code === 'Digit1' || code === 'Enter') return { type: 'allow' }
-    if (code === 'Digit4') return { type: 'deny' }
-    return { type: 'noop' }
-  }
-  const options = ask.options ?? []
-  const index = code === 'Enter' ? 0 : DIGIT_INDEX[code]
-  return index !== undefined && options[index] ? { type: 'option', index } : { type: 'noop' }
+  if (!ask || ask.kind === 'question') return { type: 'noop' }
+  if (code === 'Digit1' || code === 'Enter') return { type: 'allow' }
+  if (code === 'Digit4') return { type: 'deny' }
+  return { type: 'noop' }
 }
 
 type Params = {
   ask: Ask | undefined
   onPermission: (requestId: string, decision: 'allow' | 'deny') => void
-  onQuestion: (id: string, optionIndex: number) => void
+  /** Whether a session-detail view is currently open — Escape closes it. */
+  hasOpenDetail: boolean
+  onEscape: () => void
 }
 
 /**
@@ -48,11 +50,15 @@ type Params = {
  * changing state caused React #185 (max update depth) on this device (see
  * App.tsx); don't repeat that here.
  */
-export function useHardwareKeys({ ask, onPermission, onQuestion }: Params): FlashTarget | null {
+export function useHardwareKeys({ ask, onPermission, hasOpenDetail, onEscape }: Params): FlashTarget | null {
   const askRef = useRef(ask)
   askRef.current = ask
-  const callbacksRef = useRef({ onPermission, onQuestion })
-  callbacksRef.current = { onPermission, onQuestion }
+  const onPermissionRef = useRef(onPermission)
+  onPermissionRef.current = onPermission
+  const onEscapeRef = useRef(onEscape)
+  onEscapeRef.current = onEscape
+  const hasOpenDetailRef = useRef(hasOpenDetail)
+  hasOpenDetailRef.current = hasOpenDetail
 
   // First-seen time and answered-state for the CURRENT ask id; both reset
   // only when the id changes (tracked via a ref, not an effect dependency).
@@ -71,7 +77,17 @@ export function useHardwareKeys({ ask, onPermission, onQuestion }: Params): Flas
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.repeat) return klog(event, 'ignored:repeat')
-      if (!BOUND_CODES.has(event.code)) return klog(event, 'noop') // Escape/KeyM: deliberately unbound
+
+      // Closing a view cannot grant a tool call, so Escape bypasses every
+      // ask-answering guard below — it has its own, independent path.
+      if (event.code === 'Escape') {
+        if (!hasOpenDetailRef.current) return klog(event, 'noop')
+        event.preventDefault()
+        onEscapeRef.current()
+        return klog(event, 'close-detail')
+      }
+
+      if (!BOUND_CODES.has(event.code)) return klog(event, 'noop') // KeyM: deliberately unbound
 
       const currentAsk = askRef.current
       if (!currentAsk) return klog(event, 'noop:no-ask')
@@ -79,21 +95,17 @@ export function useHardwareKeys({ ask, onPermission, onQuestion }: Params): Flas
       if (answeredIdRef.current === currentAsk.id) return klog(event, 'ignored:already-answered')
 
       const action = resolveKeyAction(event.code, currentAsk)
-      if (action.type === 'noop') return klog(event, 'noop')
+      if (action.type === 'noop') {
+        return klog(event, currentAsk.kind === 'question' ? 'noop:question-readonly' : 'noop')
+      }
 
       event.preventDefault()
       answeredIdRef.current = currentAsk.id
       clearTimeout(flashTimerRef.current)
 
-      if (action.type === 'allow' || action.type === 'deny') {
-        klog(event, action.type)
-        setFlash({ kind: 'permission', decision: action.type })
-        callbacksRef.current.onPermission(currentAsk.id, action.type)
-      } else {
-        klog(event, `option:${action.index}`)
-        setFlash({ kind: 'option', index: action.index })
-        callbacksRef.current.onQuestion(currentAsk.id, action.index)
-      }
+      klog(event, action.type)
+      setFlash({ decision: action.type })
+      onPermissionRef.current(currentAsk.id, action.type)
       flashTimerRef.current = setTimeout(() => setFlash(null), 150)
     }
 

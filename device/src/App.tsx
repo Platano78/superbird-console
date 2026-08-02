@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { Daemon, type State } from './daemon'
 import { AskCard } from './components/AskCard'
 import { SessionGrid } from './components/SessionGrid'
+import { SessionDetail } from './components/SessionDetail'
 import { UsageRail } from './components/UsageRail'
 import { useHardwareKeys } from './useHardwareKeys'
 
-const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0 }
+const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0, lastAskBySession: {} }
 
 export default function App() {
   const [state, setState] = useState<State>(EMPTY)
   const [, tick] = useState(0)
   const daemon = useRef<Daemon | null>(null)
+  // Session tile tapped open for detail — Escape (physical back button) closes it.
+  const [openSessionId, setOpenSessionId] = useState<string | null>(null)
 
   useEffect(() => {
     const d = (daemon.current = new Daemon())
@@ -26,13 +29,34 @@ export default function App() {
   const ask = state.asks[0]
   const nowMs = Date.now() + state.offsetMs
 
-  const onPermission = (_id: string, decision: 'allow' | 'deny') => {
-    if (ask) void daemon.current?.answer(ask, decision)
+  // A pending ask always wins over the detail view — this device exists to
+  // answer these, and a detail view left open must never blind it to one.
+  // Keyed on the ask's id (a stable string), never the ask object or `state`
+  // itself — the daemon rebuilds both every snapshot, which is the same
+  // React #185 trap the polling interval above already dodges.
+  useEffect(() => {
+    if (ask) setOpenSessionId(null)
+  }, [ask?.id])
+
+  const sessions = state.snapshot?.sessions ?? []
+  const selectedSession = openSessionId ? sessions.find((s) => s.id === openSessionId) : undefined
+  // The queue's own live ask for the tapped session, if any — takes priority
+  // over the cached one in SessionDetail's routing.
+  const detailLiveAsk = selectedSession ? state.asks.find((a) => a.sessionId === selectedSession.id) : undefined
+  // Whichever ask is actually on screen right now: the detail's, if a detail
+  // is open, else the top-level auto-popup's.
+  const activeAsk = selectedSession ? detailLiveAsk : ask
+
+  const onPermission = (requestId: string, decision: 'allow' | 'deny') => {
+    const target = activeAsk?.id === requestId ? activeAsk : undefined
+    if (target) void daemon.current?.answer(target, decision)
   }
-  const onQuestion = (_id: string, optionIndex: number) => {
-    if (ask) void daemon.current?.answer(ask, 'allow', optionIndex)
-  }
-  const flash = useHardwareKeys({ ask, onPermission, onQuestion })
+  const flash = useHardwareKeys({
+    ask: activeAsk,
+    onPermission,
+    hasOpenDetail: !!selectedSession,
+    onEscape: () => setOpenSessionId(null),
+  })
 
   return (
     <div className="flex h-screen w-screen flex-col bg-black text-white">
@@ -48,21 +72,26 @@ export default function App() {
       </header>
 
       <main className="min-h-0 flex-1">
-        {ask ? (
-          <AskCard
-            ask={ask}
+        {selectedSession ? (
+          <SessionDetail
+            session={selectedSession}
+            liveAsk={detailLiveAsk}
+            cachedAsk={state.lastAskBySession[selectedSession.id]}
             nowMs={nowMs}
             onPermission={onPermission}
-            onQuestion={onQuestion}
             flash={flash}
+            onClose={() => setOpenSessionId(null)}
           />
+        ) : ask ? (
+          <AskCard ask={ask} nowMs={nowMs} onPermission={onPermission} flash={flash} />
         ) : (
-          <SessionGrid sessions={state.snapshot?.sessions ?? []} nowMs={nowMs} />
+          <SessionGrid sessions={sessions} nowMs={nowMs} onSelect={setOpenSessionId} />
         )}
       </main>
 
-      {/* Hidden while an ask is up — answering is the whole screen's job then. */}
-      {!ask && <UsageRail usage={state.usage} />}
+      {/* Hidden while an ask or the detail view is up — answering/reading is
+          the whole screen's job then. */}
+      {!ask && !selectedSession && <UsageRail usage={state.usage} />}
     </div>
   )
 }
