@@ -1,28 +1,22 @@
 import type { SessionSummary } from '../protocol'
+import { GaugeArc, type GaugeTone } from './GaugeArc'
 
-const STATE_COLOR: Record<SessionSummary['state'], string> = {
-  attention: 'border-amber-400 bg-amber-950',
-  busy: 'border-sky-600 bg-sky-950',
-  celebrate: 'border-emerald-500 bg-emerald-950',
-  idle: 'border-neutral-800 bg-neutral-900',
+const STATE_ACCENT: Record<SessionSummary['state'], string> = {
+  attention: '#fbbf24',
+  busy: '#0369a1',
+  celebrate: '#10b981',
+  idle: '#44403c',
 }
 
-/** Context fill only earns colour once it is worth acting on. */
-function ctxTone(v: number) {
-  if (v >= 0.9) return 'bg-red-400'
-  if (v >= 0.75) return 'bg-amber-400'
-  return 'bg-neutral-300'
+/** Same 0.75/0.9 thresholds as UsageRail, expressed as a gauge tone. */
+function ctxTone(v: number | null): GaugeTone {
+  if (v === null) return 'neutral'
+  if (v >= 0.9) return 'red'
+  if (v >= 0.75) return 'amber'
+  return 'neutral'
 }
 
-/**
- * Resting view: every live session at a glance. Scrolls sideways because the
- * daemon's snapshot is unbounded — it sends all sessions, not a capped page.
- *
- * Read from across a desk: the state word and the name are the only things
- * sized to be legible at distance; numbers are for when you lean in.
- */
-/** Relative activity is the thing you actually want mid-tile: is it moving?
- *  Exported — SessionDetail reuses it rather than duplicating the logic. */
+/** Exported — SessionDetail reuses it rather than duplicating the logic. */
 export function ago(ts: number, nowMs: number) {
   const s = Math.max(0, Math.round((nowMs - ts) / 1000))
   if (s < 60) return `${s}s ago`
@@ -31,79 +25,92 @@ export function ago(ts: number, nowMs: number) {
   return `${Math.round(m / 60)}h ago`
 }
 
-type Props = {
-  sessions: SessionSummary[]
-  nowMs: number
-  /** Tapping a tile opens its detail view. */
-  onSelect: (id: string) => void
-}
+const GAUGE_SIZE: Record<number, number> = { 1: 200, 2: 168, 3: 142, 4: 120 }
+const NAME_SIZE: Record<number, number> = { 1: 24, 2: 21, 3: 18, 4: 15 }
+
+type Props = { sessions: SessionSummary[]; nowMs: number; onSelect: (id: string) => void }
 
 export function SessionGrid({ sessions, nowMs, onSelect }: Props) {
   if (sessions.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center text-2xl text-neutral-600">
-        No active sessions
-      </div>
-    )
+    return <div className="flex h-full items-center justify-center text-2xl text-stone-600">No active sessions</div>
   }
+  const count = sessions.length
+  const composed = count <= 4
+  const gaugeSize = composed ? GAUGE_SIZE[count] : 100
+  const nameSize = composed ? NAME_SIZE[count] : 14
+  const gridStyle = composed
+    ? { display: 'grid' as const, gridTemplateColumns: `repeat(${count}, 1fr)` }
+    : { display: 'grid' as const, gridAutoFlow: 'column' as const, gridAutoColumns: '150px', overflowX: 'auto' as const }
 
   return (
-    <div className="flex h-full gap-3 overflow-x-auto p-4">
-      {sessions.map((s) => {
-        const pct = s.context === null ? null : Math.round(s.context * 100)
-        // ATTENTION means two different things upstream (approve a tool call,
-        // or type a reply the device can't send) — one word hid that from the
-        // owner. Split it; the amber treatment stays the same either way.
-        const stateLabel = s.state === 'attention' ? (s.pendingPermission ? 'APPROVE' : 'WAITING') : s.state
-        return (
-          <div
-            key={s.id}
-            role="button"
-            onClick={() => onSelect(s.id)}
-            className={`relative flex h-full w-56 shrink-0 cursor-pointer flex-col justify-between overflow-hidden rounded-xl border-2 p-4 transition-colors duration-500 active:brightness-90 ${STATE_COLOR[s.state]}`}
-          >
-            {/* BUSY: one travelling highlight = work in progress. */}
-            {s.state === 'busy' && (
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 w-1/4 animate-sweep bg-sky-300/70" />
-            )}
+    <div className="h-full" style={gridStyle}>
+      {sessions.map((s) => (
+        <SessionTile key={s.id} s={s} nowMs={nowMs} gaugeSize={gaugeSize} nameSize={nameSize} onSelect={onSelect} />
+      ))}
+    </div>
+  )
+}
 
-            <div>
-              <div className="truncate text-xl font-semibold text-white">{s.name}</div>
-              <div
-                className={`mt-1 text-sm uppercase tracking-wide ${
-                  s.state === 'attention' ? 'animate-breathe font-semibold text-amber-300' : 'text-neutral-500'
-                }`}
-              >
-                {stateLabel}
-              </div>
-            </div>
-
-            {/* Fills what was dead space, and answers the question you actually
-                have looking across the room: is this one still moving? */}
-            <div className="text-3xl font-light tabular-nums text-white/80">
-              {ago(s.lastActivityTs, nowMs)}
-            </div>
-
-            <div className="text-sm">
-              {/* context is 0..1 or null — null means the daemon has no reading yet */}
-              {pct !== null && (
-                <div className="mb-2">
-                  <div className="h-2 w-full overflow-hidden rounded bg-neutral-800">
-                    <div
-                      className={`h-2 rounded transition-[width] duration-700 ease-out ${ctxTone(s.context!)}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 tabular-nums text-neutral-400">{pct}% ctx</div>
-                </div>
-              )}
-              <div className="tabular-nums text-neutral-500">
-                {(s.tokens.in / 1000).toFixed(1)}k in · {(s.tokens.out / 1000).toFixed(1)}k out
-              </div>
-            </div>
+function SessionTile({
+  s,
+  nowMs,
+  gaugeSize,
+  nameSize,
+  onSelect,
+}: {
+  s: SessionSummary
+  nowMs: number
+  gaugeSize: number
+  nameSize: number
+  onSelect: (id: string) => void
+}) {
+  const pct = s.context === null ? null : Math.round(s.context * 100)
+  const stateLabel = s.state === 'attention' ? (s.pendingPermission ? 'APPROVE' : 'WAITING') : s.state
+  return (
+    // A shared cluster field, not a card: sessions are separated by a
+    // hairline rule only — the way a speedo and tach share one binnacle.
+    <div
+      role="button"
+      onClick={() => onSelect(s.id)}
+      className="relative flex h-full min-w-0 flex-col items-center border-l border-stone-800 px-1 pt-2 first:border-l-0 active:brightness-90"
+    >
+      {s.state === 'busy' && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 w-1/4 animate-sweep bg-sky-300/70" />
+      )}
+      <div style={{ display: 'grid' }} className="place-items-center">
+        <div style={{ gridArea: '1 / 1' }}>
+          <GaugeArc value={s.context} tone={ctxTone(s.context)} size={gaugeSize} />
+        </div>
+        <div style={{ gridArea: '1 / 1' }} className="text-center leading-none">
+          <div className="font-bold tabular-nums text-stone-50" style={{ fontSize: Math.round(gaugeSize * 0.2) }}>
+            {pct !== null ? `${pct}%` : '--'}
           </div>
-        )
-      })}
+          <div className="mt-0.5 text-[9px] uppercase tracking-widest text-stone-500">ctx</div>
+        </div>
+      </div>
+
+      {/* gauge + name are one composed unit — tight, no dead gap between them */}
+      <div className="-mt-1 w-full min-w-0 text-center">
+        <div className="truncate font-semibold text-stone-50" style={{ fontSize: nameSize, lineHeight: 1.1 }}>
+          {s.name}
+        </div>
+        <div style={{ background: STATE_ACCENT[s.state] }} className="mx-auto mt-0.5 h-[2px] w-8" />
+      </div>
+
+      <div
+        className={`mt-1 truncate text-[11px] uppercase tracking-wide ${
+          s.state === 'attention' ? 'animate-breathe font-semibold text-amber-300' : 'text-stone-500'
+        }`}
+      >
+        {stateLabel}
+      </div>
+
+      {/* reclaimed vertical space: token counters, dropped in the first
+          pass — real data belongs here, not empty air. */}
+      <div className="mt-1 text-[11px] tabular-nums text-stone-400">
+        {(s.tokens.in / 1000).toFixed(1)}k in · {(s.tokens.out / 1000).toFixed(1)}k out
+      </div>
+      <div className="mt-auto pb-1 text-[10px] tabular-nums text-stone-600">{ago(s.lastActivityTs, nowMs)}</div>
     </div>
   )
 }
