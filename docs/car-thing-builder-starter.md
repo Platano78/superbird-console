@@ -84,6 +84,46 @@ debugfs -R "ls -l /usr/share/qt-superbird-app/webapp" system_a.ext2
 
 Run this whenever the identity of a downloaded image actually matters, instead of assuming it.
 
+### The positive test — how to actually tell an ADB-enabled image from stock
+
+The checks above are all *negative* ("nothing looks different"), which is unsatisfying. Here is
+the affirmative one. All of the following were read off a real, working unit:
+
+**The version string stays stock.** The image does not brand itself — there is no "thinglabs"
+string anywhere on the device:
+
+```bash
+adb shell "cat /etc/superbird/version"
+# VERSION v8.9.2-release-406d0eb1f2… SHORT_VERSION v8.9.2-release GIT_HASH 406d0eb1f2…
+adb shell "cat /etc/os-release"     # NAME=Buildroot  VERSION_ID=2019.02.1
+adb shell "uname -a"                # Linux buildroot 4.9.113 … May 4 2020 … aarch64
+```
+
+That `v8.9.2-release` is **stock Spotify's own version string**. Do not read it as evidence the
+flash failed — it is exactly what a correctly modified image reports, and it is the single
+biggest source of the confusion this section exists to prevent.
+
+**The modification lives in the USB gadget init script.** This is the actual difference, and it
+is readable in plain text:
+
+```bash
+adb shell "grep -n 'adbd\|rndisEnable' /etc/init.d/S49usbgadget"
+```
+
+On a correctly prepared image you will see an explicit ADB block that mounts `functionfs` and
+launches the daemon unconditionally — `/usr/bin/adbd &` — plus `rndisEnable="true"` near the top
+of the file, which is what raises the USB-ethernet interface alongside ADB (see §10). Stock
+firmware does not start `adbd`. **That script, not the version string and not the UI, is the
+image's real identity.**
+
+And the gate that settles it in one command:
+
+```bash
+adb shell "id"      # uid=0(root) gid=0(root)
+```
+
+Root shell, no RSA prompt → the image is prepared and you are done with §2 and §3.
+
 ## 4. Getting ADB working
 
 A booted `thinglabs` device enumerates as `1d6b:1014 Remote NDIS Compatible Device, ADB
