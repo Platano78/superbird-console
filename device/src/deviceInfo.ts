@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
-export type RouterInfo = { available: boolean; loaded: string | null; count: number | null; error?: string }
+// `ids` is the router's live model roster -- ControlSlot renders its tiles
+// from this, never from a hardcoded list (the roster changes).
+export type RouterInfo = { available: boolean; loaded: string | null; count: number | null; ids: string[]; error?: string }
 export type CoderInfo = { reachable: boolean; error?: string }
 export type DiskReading = { freeKb: number; totalKb: number; usedPct: number } | null
 export type DiskInfo = { root: DiskReading; mntC: DiskReading; error?: string }
@@ -14,10 +16,17 @@ export type QueueCounts = {
   failed: number | null
   obligations: ObligationsInfo
 }
+export type DeviceUptime = { raw: string | null; load1: number | null; load5: number | null; load15: number | null }
+export type DeviceMemory = { totalMb: number; usedMb: number; freeMb: number } | null
+export type DeviceDisk = { size: string; used: string; avail: string; usePct: string } | null
+export type DeviceBlock =
+  | { tempC: number | null; uptime: DeviceUptime; memory: DeviceMemory; disk: DeviceDisk; backlight: number | null; error?: undefined }
+  | { error: string }
 export type DeviceInfoState = {
   fleet: { router: RouterInfo; coder: CoderInfo }
   queue: QueueCounts
   system: { disk: DiskInfo }
+  device: DeviceBlock
   ts: number
 }
 

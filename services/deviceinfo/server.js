@@ -33,6 +33,23 @@ const QUEUE_DIRS = ['pending', 'in-progress', 'done', 'review', 'escalated', 'fa
 const OBLIGATIONS_SCRIPT = '/home/youruser/project/_standards/obligations/obligations.py'
 const OBLIGATIONS_CACHE_MS = 30_000
 
+// -- slice 5: CONTROL (model load/kill + device-info strip) --
+//
+// Windows adb.exe, NOT WSL's own adb -- the device is on the Windows USB bus.
+// Must be addressed by serial: a bare `adb shell` aborts with "more than one
+// device/emulator" the instant a second device (e.g. a phone) joins the adb
+// server -- see scripts/keep-adb-reverse.sh for the incident this already
+// caused once.
+const ADB = '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
+const CAR_THING_SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
+const ROUTER_CONTROL = '/home/youruser/project/llama-cpp-native/router-control.sh'
+const DEVICE_CACHE_MS = 20_000
+// Not the 2s SOURCE_TIMEOUT_MS -- a model load is genuinely slow. This is a
+// safety net against a hung process, not a bound on the HTTP response (the
+// response never waits on this; see the /action handler).
+const ACTION_HARD_TIMEOUT_MS = 5 * 60_000
+const ACTION_OUTPUT_CAP_BYTES = 8192
+
 /** Fetch with a hard timeout via AbortController -- never let a slow peer
  *  hold up the whole /state response. */
 async function fetchWithTimeout(url, ms) {
@@ -50,13 +67,14 @@ async function fetchWithTimeout(url, ms) {
 async function readFleetRouter() {
   try {
     const res = await fetchWithTimeout(ROUTER_URL, SOURCE_TIMEOUT_MS)
-    if (!res.ok) return { available: false, loaded: null, count: null, error: `http ${res.status}` }
+    if (!res.ok) return { available: false, loaded: null, count: null, ids: [], error: `http ${res.status}` }
     const body = await res.json()
     const models = Array.isArray(body?.data) ? body.data : []
     const loadedEntry = models.find((m) => m?.status?.value === 'loaded')
-    return { available: true, loaded: loadedEntry ? loadedEntry.id : null, count: models.length }
+    const ids = models.map((m) => m?.id).filter(Boolean)
+    return { available: true, loaded: loadedEntry ? loadedEntry.id : null, count: models.length, ids }
   } catch (err) {
-    return { available: false, loaded: null, count: null, error: String(err?.message ?? err) }
+    return { available: false, loaded: null, count: null, ids: [], error: String(err?.message ?? err) }
   }
 }
 
@@ -143,20 +161,118 @@ async function readDisk() {
   }
 }
 
+/** 6. Rotating device-info strip -- one batched `adb shell` for all five
+ *  readings (never five separate invocations), cached 20s so the device's
+ *  5s /state poll doesn't hammer adb. */
+const DEVICE_SPLIT = '__CARTHING_SPLIT__'
+let deviceCache = { data: null, cachedAt: 0 }
+
+function parseFreeM(block) {
+  const line = block?.split('\n').find((l) => l.trim().startsWith('Mem:'))
+  if (!line) return null
+  const [, totalMb, usedMb, freeMb] = line.trim().split(/\s+/).map(Number)
+  return Number.isFinite(totalMb) && Number.isFinite(usedMb) && Number.isFinite(freeMb) ? { totalMb, usedMb, freeMb } : null
+}
+
+function parseDfH(block) {
+  const line = block?.trim().split('\n')[1]
+  if (!line) return null
+  const parts = line.trim().split(/\s+/)
+  return parts.length >= 5 ? { size: parts[1], used: parts[2], avail: parts[3], usePct: parts[4] } : null
+}
+
+function parseUptime(block) {
+  const raw = block?.trim() || null
+  const m = raw?.match(/load average:\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/)
+  return { raw, load1: m ? Number(m[1]) : null, load5: m ? Number(m[2]) : null, load15: m ? Number(m[3]) : null }
+}
+
+async function readDevice() {
+  const age = Date.now() - deviceCache.cachedAt
+  if (deviceCache.cachedAt && age < DEVICE_CACHE_MS) return deviceCache.data
+  const remoteCmd = [
+    'cat /sys/class/thermal/thermal_zone0/temp',
+    'uptime',
+    'free -m',
+    'df -h /',
+    'cat /sys/class/backlight/aml-bl/brightness',
+  ].join(`; echo ${DEVICE_SPLIT}; `)
+  let data
+  try {
+    const stdout = await execFileTimeout(ADB, ['-s', CAR_THING_SERIAL, 'shell', remoteCmd], SOURCE_TIMEOUT_MS)
+    const [tempRaw, uptimeRaw, freeRaw, dfRaw, blRaw] = stdout.split(DEVICE_SPLIT).map((s) => s.trim())
+    const tempMilli = Number(tempRaw)
+    data = {
+      tempC: Number.isFinite(tempMilli) ? tempMilli / 1000 : null,
+      uptime: parseUptime(uptimeRaw),
+      memory: parseFreeM(freeRaw),
+      disk: parseDfH(dfRaw),
+      backlight: Number.isFinite(Number(blRaw)) ? Number(blRaw) : null,
+    }
+  } catch (err) {
+    data = { error: String(err?.message ?? err) }
+  }
+  deviceCache = { data, cachedAt: Date.now() }
+  return data
+}
+
 async function buildState() {
-  const [router, coder, queueCounts, obligations, disk] = await Promise.all([
+  const [router, coder, queueCounts, obligations, disk, device] = await Promise.all([
     readFleetRouter(),
     readFleetCoder(),
     readQueueCounts(),
     readObligations(),
     readDisk(),
+    readDevice(),
   ])
   return {
     fleet: { router, coder },
     queue: { ...queueCounts, obligations },
     system: { disk },
+    device,
     ts: Date.now(),
   }
+}
+
+/** Enumerated allowlist: `kill` and `load:<live-model-id>` are the only two
+ *  shapes. The id is never interpolated into a shell string -- it becomes
+ *  one argv element to execFile, and only after being checked against the
+ *  router's own live roster (readFleetRouter -- same source /state uses,
+ *  never a hardcoded list). */
+async function resolveAction(id) {
+  // ⚠ `unload` REQUIRES a preset argument. router-control.sh:341 errors with
+  // "Usage: router-control.sh unload <preset>" and returns 1 when called bare,
+  // so a bare `unload` would have made KILL a guaranteed no-op failure. Resolve
+  // it against whatever is actually loaded right now, and refuse cleanly when
+  // nothing is — "nothing to kill" is a normal state, not an error condition.
+  if (id === 'kill') {
+    const router = await readFleetRouter()
+    if (!router.available) return { error: `router unreachable: ${router.error ?? 'unknown'}` }
+    if (!router.loaded) return { error: 'no model loaded' }
+    return { argv: [ROUTER_CONTROL, 'unload', router.loaded] }
+  }
+  if (typeof id === 'string' && id.startsWith('load:')) {
+    const modelId = id.slice('load:'.length)
+    const router = await readFleetRouter()
+    if (!router.available) return { error: `router unreachable: ${router.error ?? 'unknown'}` }
+    if (!router.ids.includes(modelId)) return { error: `unknown model id: ${modelId}` }
+    return { argv: [ROUTER_CONTROL, 'switch', modelId] }
+  }
+  return { error: `unknown action id: ${id}` }
+}
+
+function logAction(id, argv, exitInfo) {
+  console.log(`[action] ${new Date().toISOString()} id=${id} argv=${JSON.stringify(argv)} exit=${exitInfo}`)
+}
+
+/** Fire-and-forget spawn -- the HTTP response never waits on this. Timeout
+ *  is a hang safety net, not a response bound; maxBuffer is the output cap. */
+function spawnAction(argv) {
+  return new Promise((resolve) => {
+    execFile(argv[0], argv.slice(1), { timeout: ACTION_HARD_TIMEOUT_MS, maxBuffer: ACTION_OUTPUT_CAP_BYTES }, (err) => {
+      resolve(err ? `error(${err.code ?? err.signal ?? err.message})` : '0')
+    })
+  })
 }
 
 /**
@@ -172,26 +288,54 @@ async function buildState() {
  * both slots render "DEVICEINFO SERVICE UNREACHABLE" while a device-side
  * `wget` to the same URL succeeds, which is the confusing part.
  *
- * `*` is fine here: this service is read-only, exposes no secrets, and binds
- * loopback only (see the threat model in the internal plans).
+ * `*` is fine here: this service is read-only (except the enumerated /action
+ * allowlist below), exposes no secrets, and binds loopback only (see the
+ * threat model in the internal plans).
  */
-const JSON_HEADERS = {
-  'content-type': 'application/json',
+const CORS_HEADERS = {
   'access-control-allow-origin': '*',
+  // POST + a JSON content-type triggers a CORS preflight (OPTIONS) -- these
+  // two headers are what make that preflight succeed. Missing either one
+  // fails /action's POST the exact same silent way GET /state failed before
+  // access-control-allow-origin was added.
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'Content-Type',
+}
+const JSON_HEADERS = { 'content-type': 'application/json', ...CORS_HEADERS }
+const MAX_ACTION_BODY_BYTES = 4096
+
+function readActionId(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > MAX_ACTION_BODY_BYTES) req.destroy(new Error('body too large'))
+    })
+    req.on('error', reject)
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(body || '{}').id)
+      } catch {
+        reject(new Error('invalid JSON body'))
+      }
+    })
+  })
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method !== 'GET') {
-    res.writeHead(405, JSON_HEADERS)
-    res.end(JSON.stringify({ error: 'method not allowed' }))
+  // Preflight for the POST below -- browsers send this before the real
+  // request whenever it carries a JSON content-type.
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS_HEADERS)
+    res.end()
     return
   }
-  if (req.url === '/health') {
+  if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, JSON_HEADERS)
     res.end(JSON.stringify({ ok: true }))
     return
   }
-  if (req.url === '/state') {
+  if (req.method === 'GET' && req.url === '/state') {
     try {
       const state = await buildState()
       res.writeHead(200, JSON_HEADERS)
@@ -202,8 +346,43 @@ const server = http.createServer(async (req, res) => {
     }
     return
   }
-  res.writeHead(404, JSON_HEADERS)
-  res.end(JSON.stringify({ error: 'not found' }))
+  if (req.method === 'POST' && req.url === '/action') {
+    let id
+    try {
+      id = await readActionId(req)
+    } catch (err) {
+      res.writeHead(400, JSON_HEADERS)
+      res.end(JSON.stringify({ error: String(err?.message ?? err) }))
+      return
+    }
+    const resolved = await resolveAction(id)
+    if (resolved.error) {
+      logAction(id, null, `rejected(${resolved.error})`)
+      res.writeHead(400, JSON_HEADERS)
+      res.end(JSON.stringify({ error: resolved.error }))
+      return
+    }
+    const { argv } = resolved
+    if (process.env.CARTHING_ACTION_DRYRUN === '1') {
+      logAction(id, argv, 'DRYRUN (not spawned)')
+      res.writeHead(202, JSON_HEADERS)
+      res.end(JSON.stringify({ id, argv, dryRun: true }))
+      return
+    }
+    // 202 fires immediately -- the device observes the actual result later
+    // through /state's fleet.router.loaded, not through this response.
+    res.writeHead(202, JSON_HEADERS)
+    res.end(JSON.stringify({ id, argv }))
+    spawnAction(argv).then((exitInfo) => logAction(id, argv, exitInfo))
+    return
+  }
+  if (req.method === 'GET' || req.method === 'POST') {
+    res.writeHead(404, JSON_HEADERS)
+    res.end(JSON.stringify({ error: 'not found' }))
+    return
+  }
+  res.writeHead(405, JSON_HEADERS)
+  res.end(JSON.stringify({ error: 'method not allowed' }))
 })
 
 if (require.main === module) {

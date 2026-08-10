@@ -5,13 +5,11 @@ import { SessionGrid } from './components/SessionGrid'
 import { SessionDetail } from './components/SessionDetail'
 import { UsageRail } from './components/UsageRail'
 import { PresetBar } from './components/PresetBar'
-import { NotBuiltSlot } from './components/NotBuiltSlot'
 import { FleetSlot } from './components/FleetSlot'
 import { QueueSlot } from './components/QueueSlot'
+import { ControlSlot } from './components/ControlSlot'
 import { useHardwareKeys } from './useHardwareKeys'
 import { useDeviceInfo } from './deviceInfo'
-
-const SLOT_LABEL: Record<number, string> = { 2: 'FLEET', 3: 'QUEUE', 4: 'CONTROL' }
 
 /** A warning lamp only lights for data that actually exists in app state —
  *  no MCP-health/disk lamps yet, that data doesn't exist until slice 3. */
@@ -37,8 +35,7 @@ export default function App() {
   const daemon = useRef<Daemon | null>(null)
   // Session tile tapped open for detail — Escape (physical back button) closes it.
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
-  // Which of the four preset slots is showing. Slots 1-3 are built; slot 4
-  // (CONTROL) still renders an honest "not implemented" panel.
+  // Which of the four preset slots is showing. All four are built.
   const [activeSlot, setActiveSlot] = useState(1)
   // Fleet/queue/disk state for slots 2-3 — its own poll, entirely separate
   // from the daemon connection above.
@@ -138,7 +135,7 @@ export default function App() {
         ) : activeSlot === 3 ? (
           <QueueSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         ) : (
-          <NotBuiltSlot label={SLOT_LABEL[activeSlot]} />
+          <ControlSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         )}
       </main>
 
