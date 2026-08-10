@@ -5,7 +5,10 @@ import { SessionGrid } from './components/SessionGrid'
 import { SessionDetail } from './components/SessionDetail'
 import { UsageRail } from './components/UsageRail'
 import { PresetBar } from './components/PresetBar'
+import { NotBuiltSlot } from './components/NotBuiltSlot'
 import { useHardwareKeys } from './useHardwareKeys'
+
+const SLOT_LABEL: Record<number, string> = { 2: 'FLEET', 3: 'QUEUE', 4: 'CONTROL' }
 
 /** A warning lamp only lights for data that actually exists in app state —
  *  no MCP-health/disk lamps yet, that data doesn't exist until slice 3. */
@@ -31,6 +34,9 @@ export default function App() {
   const daemon = useRef<Daemon | null>(null)
   // Session tile tapped open for detail — Escape (physical back button) closes it.
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
+  // Which of the four preset slots is showing. Slot 1 (SESSIONS) is the only
+  // one that's actually built; 2-4 render an honest "not implemented" panel.
+  const [activeSlot, setActiveSlot] = useState(1)
 
   useEffect(() => {
     const d = (daemon.current = new Daemon())
@@ -68,11 +74,19 @@ export default function App() {
     const target = activeAsk?.id === requestId ? activeAsk : undefined
     if (target) void daemon.current?.answer(target, decision)
   }
+  // Single source of truth for slot switching — passed to both the hardware
+  // keys and the on-screen PresetBar, never duplicated between them.
+  const onSlotChange = (slot: number) => {
+    setActiveSlot(slot)
+    setOpenSessionId(null) // switching slots closes any open session detail
+  }
   const flash = useHardwareKeys({
     ask: activeAsk,
     onPermission,
     hasOpenDetail: !!selectedSession,
     onEscape: () => setOpenSessionId(null),
+    activeSlot,
+    onSlotChange,
   })
 
   // Only lamps backed by real state: connection, and plan-limit pressure
@@ -108,9 +122,13 @@ export default function App() {
             onClose={() => setOpenSessionId(null)}
           />
         ) : ask ? (
+          // A pending ask steals the screen regardless of which slot is
+          // active — see AGENTS.md: "ask > app switching, always."
           <AskCard ask={ask} nowMs={nowMs} onPermission={onPermission} flash={flash} />
-        ) : (
+        ) : activeSlot === 1 ? (
           <SessionGrid sessions={sessions} nowMs={nowMs} onSelect={setOpenSessionId} />
+        ) : (
+          <NotBuiltSlot label={SLOT_LABEL[activeSlot]} />
         )}
       </main>
 
@@ -119,7 +137,7 @@ export default function App() {
       {!ask && !selectedSession && (
         <>
           <UsageRail usage={state.usage} />
-          <PresetBar />
+          <PresetBar activeSlot={activeSlot} onSelect={onSlotChange} />
         </>
       )}
     </div>

@@ -46,13 +46,13 @@ export function AskCard({ ask, nowMs, onPermission, flash, readOnly = false }: P
       <div className="min-h-0">
         <div className="flex items-baseline justify-between">
           <span className="text-xl font-semibold text-amber-300">{ask.sessionName}</span>
-          <span className="flex items-center gap-3">
+          <span className="flex items-center">
             <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs uppercase tracking-wide text-neutral-400">
               {/* questions carry their own header (already uppercased upstream) */}
               {ask.header ?? ask.kind}
             </span>
             {left !== null && (
-              <span className={`text-lg tabular-nums ${urgent ? 'text-red-400' : 'text-neutral-400'}`}>
+              <span className={`ml-3 text-lg tabular-nums ${urgent ? 'text-red-400' : 'text-neutral-400'}`}>
                 {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}
               </span>
             )}
@@ -91,7 +91,7 @@ export function AskCard({ ask, nowMs, onPermission, flash, readOnly = false }: P
           This request expired — answer in the terminal
         </div>
       ) : (
-        <div className="flex gap-4">
+        <div className="flex">
           <button
             onClick={() => onPermission(ask.id, 'deny')}
             className={`h-24 flex-1 rounded-2xl bg-neutral-800 text-2xl font-semibold text-neutral-200 active:bg-neutral-700 ${
@@ -102,7 +102,7 @@ export function AskCard({ ask, nowMs, onPermission, flash, readOnly = false }: P
           </button>
           <button
             onClick={() => onPermission(ask.id, 'allow')}
-            className={`h-24 flex-[2] rounded-2xl bg-emerald-600 text-3xl font-bold text-white active:bg-emerald-500 ${
+            className={`ml-4 h-24 flex-[2] rounded-2xl bg-emerald-600 text-3xl font-bold text-white active:bg-emerald-500 ${
               flash?.decision === 'allow' ? 'ring-2 ring-white' : ''
             }`}
           >

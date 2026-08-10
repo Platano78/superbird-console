@@ -37,10 +37,10 @@ export function SessionDetail({ session, liveAsk, cachedAsk, nowMs, onPermission
     body = <AskCard ask={cachedAsk} nowMs={nowMs} onPermission={onPermission} flash={null} readOnly />
   } else if (session.state === 'attention' && !session.pendingPermission) {
     body = (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-5 text-center">
+      <div className="flex h-full flex-col items-center justify-center p-5 text-center">
         <div className="text-xl font-semibold text-amber-300">{session.name}</div>
-        <div className="text-3xl font-bold text-white">Waiting for your prompt</div>
-        <div className="text-sm uppercase tracking-wide text-neutral-500">Answer in the terminal</div>
+        <div className="mt-2 text-3xl font-bold text-white">Waiting for your prompt</div>
+        <div className="mt-2 text-sm uppercase tracking-wide text-neutral-500">Answer in the terminal</div>
       </div>
     )
   } else {
@@ -66,7 +66,7 @@ export function SessionDetail({ session, liveAsk, cachedAsk, nowMs, onPermission
     <div className="flex h-full w-full flex-col">
       <button
         onClick={onClose}
-        className="flex items-center gap-1 px-4 py-2 text-left text-sm text-neutral-500 active:text-neutral-300"
+        className="flex items-center px-4 py-2 text-left text-sm text-neutral-500 active:text-neutral-300"
       >
         ‹ Back
       </button>
