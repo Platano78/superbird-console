@@ -157,9 +157,20 @@ This bridge process dies on reboot/shutdown; restart it as needed.
   ```
 - Put your built app in its own directory under `/usr/share/` (e.g.
   `/usr/share/my-app/`) and edit that line to point at your app's `index.html` instead.
-- **Leave the stock Spotify webapp directory intact.** Don't overwrite or delete
-  `/usr/share/qt-superbird-app/webapp/` — pointing the supervisor line back at it is then a
-  one-line revert (see §11).
+- **Edit only the `--app=` value on that line — keep every other flag.** The stock line carries
+  flags the kiosk depends on, notably `--allow-file-access-from-files` (which is what lets a
+  `file://` page fetch its own local assets), plus `--no-sandbox`, `--in-process-gpu`,
+  `--user-data-dir=...` and `--remote-debugging-port=2222`. Drop one by rewriting the whole line
+  and you will lose behaviour you need.
+- **Back up the stock webapp directory *before* you run any third-party tooling**, and don't
+  overwrite or delete it yourself:
+  ```bash
+  adb shell "mount -o remount,rw / && cp -rn /usr/share/qt-superbird-app/webapp /usr/share/webapp.stock"
+  ```
+  > ⚠ Do not assume this directory stays pristine just because *you* left it alone. On the
+  > reference unit this guide is drawn from, **DeskThing overwrote it** — that path now serves
+  > the DeskThing client and the original Spotify UI is not recoverable from the device. Verified
+  > by reading the file on real hardware. Take the backup while it is still stock; it is ~50 KB.
 - Space is not a constraint: roughly 172 MB free was measured against a real deployed bundle of
   ~250 KB.
 
@@ -328,19 +339,23 @@ real authentication.
 
 ## 11. Reverting to stock / recovery
 
-The stock Spotify webapp was never touched by any of the above — it's still sitting at
-`/usr/share/qt-superbird-app/webapp/`. To point the kiosk back at it and restore the original
-supervisor config:
+Nothing in this guide touches `/usr/share/qt-superbird-app/webapp/`, so if you took the backup in
+§5 *and* nothing else has written there, pointing the kiosk back at it restores what was on the
+device. To restore the original supervisor config:
 
 ```bash
 adb shell "mount -o remount,rw / && cp /etc/supervisord.conf.stock /etc/supervisord.conf && supervisorctl restart chromium"
 ```
 
-> ⚠ This assumes `/etc/supervisord.conf.stock` exists — either because you created it in §5
-> before your first edit (do that), or because your image shipped one. **Whether a stock
-> `thinglabs` build ships that backup is UNVERIFIED**, so don't count on it. With no backup,
-> manually edit the `--app=file://...` line in `/etc/supervisord.conf` back to
+> ⚠ This assumes `/etc/supervisord.conf.stock` exists. It *did* exist on the reference unit
+> (verified on hardware), but whether that is shipped by the image or was created by tooling is
+> **UNVERIFIED** — so create your own in §5 rather than relying on it. With no backup, manually
+> edit the `--app=file://...` line in `/etc/supervisord.conf` back to
 > `file:///usr/share/qt-superbird-app/webapp/index.html` instead.
+
+⚠ **This restores the config, not the UI.** The kiosk will load whatever currently lives at that
+path — which is only the Spotify UI if nothing ever overwrote it (see the §5 warning). If you want
+a guaranteed factory state, the real reset is a reflash, not this command.
 
 **Bricking is very unlikely.** The device is always recoverable by re-entering flash mode
 (hold presets 1+4 while plugging in, per §2) and reflashing. Firmware choice is a reversible

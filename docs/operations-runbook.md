@@ -211,8 +211,23 @@ Helper scripts used during bring-up live in the session scratchpad (`inspect2.mj
 ```
 adb shell "mount -o remount,rw / && cp /etc/supervisord.conf.stock /etc/supervisord.conf && supervisorctl restart chromium"
 ```
-The stock Spotify webapp was never overwritten; it is still at
-`/usr/share/qt-superbird-app/webapp/`.
+⚠ **This restores the config, not the stock UI — corrected 2026-08-10 on hardware.** The claim
+that "the stock Spotify webapp was never overwritten" is **FALSE on this device**. Read from the
+live unit:
+
+```
+$ adb shell "grep -o '<title>[^<]*</title>' /usr/share/qt-superbird-app/webapp/index.html"
+<title>DeskThing Client</title>
+```
+
+DeskThing overwrote that directory (there is also a nested `webapp/webapp/`, likewise DeskThing;
+`grep -rl Superbird /usr/share/` returns nothing). `supervisord.conf.stock` still points at that
+path, so this command boots **the DeskThing client**, not the Spotify UI. The original Spotify
+webapp is **not recoverable from the device** — only by reflashing.
+
+Consequence for `firmware-decision.md`'s "the stock Spotify webapp is left intact, so reverting is
+a one-line edit": the one-line edit still restores *our* pre-`claude-thing` state, which is what it
+was actually protecting. It does not restore factory.
 
 ## ⚠ No permission cards? Check the permission MODE first
 
