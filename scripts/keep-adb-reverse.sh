@@ -32,6 +32,7 @@ while true; do
     # 2020-era adbd, so it cannot be used as the health check. Re-asserting the
     # tunnel is idempotent and cheap, so just do that.
     "$ADB" -s "$SERIAL" reverse tcp:8790 tcp:8790 >/dev/null 2>&1
+    "$ADB" -s "$SERIAL" reverse tcp:8791 tcp:8791 >/dev/null 2>&1   # deviceinfo (fleet/queue/disk)
     "$ADB" -s "$SERIAL" forward tcp:9222 tcp:2222 >/dev/null 2>&1   # device DevTools console
   fi
   sleep "$INTERVAL"

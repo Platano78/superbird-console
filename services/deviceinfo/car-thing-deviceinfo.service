@@ -1,0 +1,16 @@
+[Unit]
+Description=Car Thing device-info read-only service (fleet/queue/disk state for the dashboard)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/youruser/project/car-thing
+# systemd user services do NOT inherit the shell PATH -- see
+# scripts/car-thing-backlight.service for the same gotcha.
+Environment=PATH=/home/youruser/.local/bin:/home/youruser/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/youruser/.nvm/versions/node/v22.22.3/bin/node services/deviceinfo/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

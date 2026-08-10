@@ -6,7 +6,10 @@ import { SessionDetail } from './components/SessionDetail'
 import { UsageRail } from './components/UsageRail'
 import { PresetBar } from './components/PresetBar'
 import { NotBuiltSlot } from './components/NotBuiltSlot'
+import { FleetSlot } from './components/FleetSlot'
+import { QueueSlot } from './components/QueueSlot'
 import { useHardwareKeys } from './useHardwareKeys'
+import { useDeviceInfo } from './deviceInfo'
 
 const SLOT_LABEL: Record<number, string> = { 2: 'FLEET', 3: 'QUEUE', 4: 'CONTROL' }
 
@@ -34,9 +37,12 @@ export default function App() {
   const daemon = useRef<Daemon | null>(null)
   // Session tile tapped open for detail — Escape (physical back button) closes it.
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
-  // Which of the four preset slots is showing. Slot 1 (SESSIONS) is the only
-  // one that's actually built; 2-4 render an honest "not implemented" panel.
+  // Which of the four preset slots is showing. Slots 1-3 are built; slot 4
+  // (CONTROL) still renders an honest "not implemented" panel.
   const [activeSlot, setActiveSlot] = useState(1)
+  // Fleet/queue/disk state for slots 2-3 — its own poll, entirely separate
+  // from the daemon connection above.
+  const deviceInfo = useDeviceInfo()
 
   useEffect(() => {
     const d = (daemon.current = new Daemon())
@@ -127,6 +133,10 @@ export default function App() {
           <AskCard ask={ask} nowMs={nowMs} onPermission={onPermission} flash={flash} />
         ) : activeSlot === 1 ? (
           <SessionGrid sessions={sessions} nowMs={nowMs} onSelect={setOpenSessionId} />
+        ) : activeSlot === 2 ? (
+          <FleetSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
+        ) : activeSlot === 3 ? (
+          <QueueSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         ) : (
           <NotBuiltSlot label={SLOT_LABEL[activeSlot]} />
         )}
