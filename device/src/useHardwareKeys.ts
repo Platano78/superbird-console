@@ -11,6 +11,10 @@ export type KlogEntry = { code: string; key: string; repeat: boolean; t: number;
 const KLOG_MAX = 50
 const ARM_DELAY_MS = 250
 const BOUND_CODES = new Set(['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Enter'])
+/** Digit1..4 double as the four physical preset buttons when no ask is
+ *  pending — Enter (the dial press) is deliberately excluded, it is not a
+ *  preset button. */
+const SLOT_BY_CODE: Record<string, number> = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4 }
 
 function klog(e: KeyboardEvent, action: string) {
   const log = (window.__klog ??= [])
@@ -41,6 +45,11 @@ type Params = {
   /** Whether a session-detail view is currently open — Escape closes it. */
   hasOpenDetail: boolean
   onEscape: () => void
+  /** Currently active preset slot (1-4) — read to skip a same-slot press. */
+  activeSlot: number
+  /** Digit1..4 switch slots, but ONLY when no ask is pending (see the
+   *  ask-always-wins guard below). Never called for the currently active slot. */
+  onSlotChange: (slot: number) => void
 }
 
 /**
@@ -50,7 +59,14 @@ type Params = {
  * changing state caused React #185 (max update depth) on this device (see
  * App.tsx); don't repeat that here.
  */
-export function useHardwareKeys({ ask, onPermission, hasOpenDetail, onEscape }: Params): FlashTarget | null {
+export function useHardwareKeys({
+  ask,
+  onPermission,
+  hasOpenDetail,
+  onEscape,
+  activeSlot,
+  onSlotChange,
+}: Params): FlashTarget | null {
   const askRef = useRef(ask)
   askRef.current = ask
   const onPermissionRef = useRef(onPermission)
@@ -59,6 +75,10 @@ export function useHardwareKeys({ ask, onPermission, hasOpenDetail, onEscape }: 
   onEscapeRef.current = onEscape
   const hasOpenDetailRef = useRef(hasOpenDetail)
   hasOpenDetailRef.current = hasOpenDetail
+  const activeSlotRef = useRef(activeSlot)
+  activeSlotRef.current = activeSlot
+  const onSlotChangeRef = useRef(onSlotChange)
+  onSlotChangeRef.current = onSlotChange
 
   // First-seen time and answered-state for the CURRENT ask id; both reset
   // only when the id changes (tracked via a ref, not an effect dependency).
@@ -90,7 +110,20 @@ export function useHardwareKeys({ ask, onPermission, hasOpenDetail, onEscape }: 
       if (!BOUND_CODES.has(event.code)) return klog(event, 'noop') // KeyM: deliberately unbound
 
       const currentAsk = askRef.current
-      if (!currentAsk) return klog(event, 'noop:no-ask')
+      if (!currentAsk) {
+        // Ask always wins (see above the currentAsk check is only reachable
+        // when there is none) — with nothing pending, Digit1..4 become the
+        // four preset buttons. Enter is the dial press, not a preset, so it
+        // stays a noop here. Neither the arm delay nor the answered-id guard
+        // below applies to this path — there is no misfire risk in changing
+        // a view, only in granting a tool call.
+        if (event.code === 'Enter') return klog(event, 'noop:dial-no-ask')
+        const slot = SLOT_BY_CODE[event.code]
+        if (slot === activeSlotRef.current) return klog(event, 'noop:slot-unchanged')
+        event.preventDefault()
+        onSlotChangeRef.current(slot)
+        return klog(event, `slot:${slot}`)
+      }
       if (Date.now() - armedAtRef.current < ARM_DELAY_MS) return klog(event, 'ignored:arming')
       if (answeredIdRef.current === currentAsk.id) return klog(event, 'ignored:already-answered')
 
