@@ -72,6 +72,11 @@ Therefore, after a **correct** flash:
 - `/usr/share/qt-superbird-app/webapp/index.html` still reads `<title>Superbird</title>` with
   May 2020 timestamps.
 
+⚠ **That title check is only valid on a FRESH flash.** Verified 2026-08-10: on this unit the same
+file now reads `<title>DeskThing Client</title>` — DeskThing overwrote the directory after flashing.
+Do not use the title as a post-hoc "was this flashed correctly" test on a device that has since had
+tooling pointed at it; use `adb shell` working as root, which is the real gate.
+
 **The pass gate is `adb shell` working as root**, not a changed webapp. DeskThing supplies the
 UI over ADB at runtime; the firmware's only job is to make ADB available.
 
