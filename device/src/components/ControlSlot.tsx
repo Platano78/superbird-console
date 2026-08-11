@@ -1,5 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { DeviceBlock, DeviceInfoState, RouterInfo } from '../deviceInfo'
+
+// Icons are PLAIN RUNTIME STRINGS, resolved document-relative at render
+// time (`./icons/<file>` -> `iconUrl()` below) -- NOT ES-module asset
+// imports. `import ... from '.../foo.png'` compiles to `new URL(asset,
+// import.meta.url)`, and that constructor is not present in the legacy/
+// SystemJS shim this Chromium 69 kiosk executes -- it throws mid-module-
+// execution and blank-screens the ENTIRE app, not just the icons (verified
+// on device: `TypeError: nd is not a constructor`). The files live in
+// `public/icons/` (Vite copies `public/` verbatim to the output root) and
+// are referenced only as strings from here on.
+function iconUrl(file: string) {
+  return `./icons/${file}`
+}
 
 const ACTION_URL = 'http://127.0.0.1:8791/action'
 // A mis-tap here costs minutes of VRAM churn, not a security boundary --
@@ -8,15 +21,37 @@ const ACTION_URL = 'http://127.0.0.1:8791/action'
 const CONFIRM_TIMEOUT_MS = 4000
 const ROTATE_MS = 4000
 
-/** `agents-qwen35-9b` -> { family: 'AGENTS', remainder: 'qwen35-9b' }.
- *  `gemma4-26b` -> { family: 'GEMMA', remainder: '26b' } -- the trailing
- *  digit on some family prefixes (gemma4) is a version, not part of the
- *  family name, so it's stripped before uppercasing. */
+/** `agents-qwen35-9b` -> { family: 'AGENTS', remainder: 'qwen35-9b' } --
+ *  kept only as the text-fallback path for a model id absent from
+ *  MODEL_INFO below (honest degradation: no placeholder art for an
+ *  unknown id, not a missing tile). */
 function familyOf(id: string) {
   const first = id.split('-')[0] ?? id
   const family = first.replace(/\d+$/, '').toUpperCase()
   const remainder = id.slice(first.length + 1)
   return { family, remainder: remainder || first }
+}
+
+/**
+ * The authoritative model -> {display name, art} mapping, per the owner's
+ * table (sourced from the live WigiDash LLM-control widget's own shipped
+ * config -- this is not invented). `icon_qwen35_35b_*` is deliberately
+ * shared by two entries; that's how the source config does it. The
+ * inactive-state suffix is inconsistent upstream (`_off` vs `_inactive`),
+ * so each entry spells out its own exact filename rather than deriving one
+ * by string concatenation.
+ */
+const MODEL_INFO: Record<string, { name: string; active: string; inactive: string }> = {
+  'agents-qwen35-9b': { name: 'Qwen3.5', active: 'icon_qwen35_active.png', inactive: 'icon_qwen35_off.png' },
+  'coding-nouscoder-14b': { name: 'NousCoder', active: 'icon_glm_active.png', inactive: 'icon_glm_off.png' },
+  'coding-qwen3-next': { name: 'QCN 80B', active: 'icon_qcn_active.png', inactive: 'icon_qcn_off.png' },
+  'gemma4-26b': { name: 'Gemma4 26B', active: 'icon_gemma4_26b_active.png', inactive: 'icon_gemma4_26b_inactive.png' },
+  'gemma4-31b': { name: 'Gemma4 31B', active: 'icon_gemma4_31b_active.png', inactive: 'icon_gemma4_31b_inactive.png' },
+  'general-qwen36-35b': { name: 'Q3.6 35B', active: 'icon_qwen35_35b_active.png', inactive: 'icon_qwen35_35b_off.png' },
+  'reasoning-bonsai-27b-ternary': { name: 'Bonsai 262K', active: 'icon_seedcoder_active.png', inactive: 'icon_seedcoder_off.png' },
+  'reasoning-cascade2': { name: 'Cascade 2', active: 'icon_nemotron_active.png', inactive: 'icon_nemotron_off.png' },
+  'reasoning-qwen36-27b-mtp': { name: 'Q3.6 27B MTP', active: 'icon_qwen35_35b_active.png', inactive: 'icon_qwen35_35b_off.png' },
+  'reasoning-qwen36-27b-heretic-q3km-mtp': { name: 'Q3.6 27B DAU', active: 'icon_davidau_active.png', inactive: 'icon_davidau_inactive.png' },
 }
 
 function postAction(id: string) {
@@ -62,68 +97,69 @@ function useConfirm() {
   return { pending, tap, cancel }
 }
 
-/**
- * Per-family wayfinding marks -- small, monochrome, `currentColor` so a
- * parent text-color class tints them the same as the family label. Plain
- * inline SVG only (no assets, no icon library, no filters/gradients/
- * animation) -- cheap pictograms, not illustrations, same idea as the
- * WigiDash widgets' procedurally-drawn icons.
- */
-function IconAgents({ className }: { className?: string }) {
-  // two peer nodes -- multiple agents, not one model
+// Absolute-fill layers for the art + scrim -- explicit top/right/bottom/left,
+// not Tailwind's `inset-0` utility, to stay clear of the banned `inset`
+// shorthand CSS property regardless of how any given Tailwind version
+// happens to compile that utility.
+const FILL_STYLE: CSSProperties = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }
+const LABEL_SHADOW: CSSProperties = { textShadow: '0 1px 3px rgba(0,0,0,0.9)' }
+
+/** Full-bleed art tile for a model id present in MODEL_INFO. The source art
+ *  is busy and bright at 256x256 shrunk into a ~190x100 tile -- the dark
+ *  scrim is what keeps the label legible, not the art's own dimming (the
+ *  inactive PNGs are already grayscale at source, but still get the
+ *  HEAVIER scrim per the owner's ruling: not-loaded should read as more
+ *  muted, not less -- loaded gets the lighter one as the "this is live"
+ *  cue). No filters/blurs on the image itself -- a plain flat-colour
+ *  overlay div is the entire treatment, cheap on 488MB. */
+function ArtModelTile({
+  id,
+  name,
+  art,
+  isLoaded,
+  isPending,
+  onTap,
+}: {
+  id: string
+  name: string
+  art: string
+  isLoaded: boolean
+  isPending: boolean
+  onTap: (id: string) => void
+}) {
   return (
-    <svg width="13" height="13" viewBox="0 0 14 14" className={className}>
-      <circle cx="5" cy="5" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="10" cy="9" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
+    <div
+      role="button"
+      onClick={() => onTap(id)}
+      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center active:brightness-90 ${
+        isLoaded ? 'border-sky-500' : 'border-stone-800'
+      }`}
+    >
+      <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
+      <div style={{ ...FILL_STYLE, background: isLoaded ? 'rgba(12,10,9,0.45)' : 'rgba(12,10,9,0.68)' }} />
+      <div className="relative w-full px-1 pb-1">
+        <div
+          className={`truncate font-semibold ${isLoaded ? 'text-sky-200' : 'text-stone-100'}`}
+          style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}
+        >
+          {name}
+        </div>
+        {isPending ? (
+          <div className="text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
+            CONFIRM?
+          </div>
+        ) : (
+          isLoaded && <div className="mx-auto mt-0.5 h-[2px] w-6 bg-sky-400" />
+        )}
+      </div>
+    </div>
   )
-}
-function IconCoding({ className }: { className?: string }) {
-  // angle brackets -- the one glyph nobody has to learn
-  return (
-    <svg width="13" height="13" viewBox="0 0 14 14" className={className}>
-      <path d="M4 3 L1 7 L4 11" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 3 L13 7 L10 11" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function IconGemma({ className }: { className?: string }) {
-  // a facet-cut gem -- the name is literally "gem"
-  return (
-    <svg width="13" height="13" viewBox="0 0 14 14" className={className}>
-      <path d="M7 1 L13 5 L7 13 L1 5 Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-      <path d="M1 5 L13 5" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  )
-}
-function IconGeneral({ className }: { className?: string }) {
-  // a plain circle -- no specialization, the universal shape
-  return (
-    <svg width="13" height="13" viewBox="0 0 14 14" className={className}>
-      <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  )
-}
-function IconReasoning({ className }: { className?: string }) {
-  // three chained nodes -- a step-by-step chain, not a single lookup
-  return (
-    <svg width="13" height="13" viewBox="0 0 14 14" className={className}>
-      <circle cx="2.5" cy="11.5" r="1.5" fill="currentColor" />
-      <circle cx="7" cy="6" r="1.5" fill="currentColor" />
-      <circle cx="11.5" cy="2.5" r="1.5" fill="currentColor" />
-      <path d="M3.6 10.3 L5.9 7.3 M8.1 4.8 L10.4 3.5" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  )
-}
-const FAMILY_ICON: Record<string, (props: { className?: string }) => JSX.Element> = {
-  AGENTS: IconAgents,
-  CODING: IconCoding,
-  GEMMA: IconGemma,
-  GENERAL: IconGeneral,
-  REASONING: IconReasoning,
 }
 
-function ModelTile({
+/** Text-only fallback for a model id NOT in MODEL_INFO -- honest
+ *  degradation, never placeholder art. Same look the whole grid had before
+ *  this slice, minus the (now-removed) per-family SVG mark. */
+function TextModelTile({
   id,
   loaded,
   pending,
@@ -137,7 +173,6 @@ function ModelTile({
   const { family, remainder } = familyOf(id)
   const isLoaded = loaded === id
   const isPending = pending === id
-  const Icon = FAMILY_ICON[family]
   return (
     <div
       role="button"
@@ -146,13 +181,7 @@ function ModelTile({
         isLoaded ? 'bg-sky-950' : ''
       }`}
     >
-      {/* icon is wayfinding only -- the family label text stays the source
-          of truth, no gap (flex gap is a no-op on this Chromium), margin
-          on the label does the spacing instead */}
-      <div className="flex items-center justify-center">
-        {Icon && <Icon className={isLoaded ? 'text-sky-400' : 'text-stone-600'} />}
-        <div className={`ml-1 text-[9px] uppercase tracking-widest ${isLoaded ? 'text-sky-300' : 'text-stone-500'}`}>{family}</div>
-      </div>
+      <div className={`text-[9px] uppercase tracking-widest ${isLoaded ? 'text-sky-300' : 'text-stone-500'}`}>{family}</div>
       <div
         className={`mt-0.5 font-semibold ${isLoaded ? 'text-sky-300' : 'text-stone-100'}`}
         style={{ fontSize: 12, lineHeight: 1.15, whiteSpace: 'normal', wordBreak: 'break-word' }}
@@ -168,23 +197,57 @@ function ModelTile({
   )
 }
 
+function ModelTile({
+  id,
+  loaded,
+  pending,
+  onTap,
+}: {
+  id: string
+  loaded: string | null
+  pending: string | null
+  onTap: (id: string) => void
+}) {
+  const info = MODEL_INFO[id]
+  if (!info) return <TextModelTile id={id} loaded={loaded} pending={pending} onTap={onTap} />
+  const isLoaded = loaded === id
+  const isPending = pending === id
+  return (
+    <ArtModelTile
+      id={id}
+      name={info.name}
+      art={isLoaded ? info.active : info.inactive}
+      isLoaded={isLoaded}
+      isPending={isPending}
+      onTap={onTap}
+    />
+  )
+}
+
 /** The grid's status line, not a 12th tile -- what "the loaded tile lights
  *  up" doesn't convey: the state you're actually in when nothing is
  *  loaded. Same tone vocabulary as everywhere else: red only for an
- *  actual failure (router unreachable), neutral for the normal IDLE state. */
+ *  actual failure (router unreachable), neutral for the normal IDLE state.
+ *  The small router icon is a non-full-bleed prefix mark, not a tile. */
 function RouterStatusLine({ router }: { router: RouterInfo }) {
   if (!router.available) {
     return (
       <div className="flex shrink-0 items-center justify-between border-b border-stone-800 px-2 py-1 text-[11px]">
-        <span className="font-semibold uppercase tracking-wide text-red-400">router unreachable</span>
+        <span className="flex items-center">
+          <img src={iconUrl('icon_router_off.png')} alt="" className="mr-1 h-[14px] w-[14px]" />
+          <span className="font-semibold uppercase tracking-wide text-red-400">router unreachable</span>
+        </span>
         <span className="truncate text-stone-500">{router.error ?? 'unknown error'}</span>
       </div>
     )
   }
   return (
     <div className="flex shrink-0 items-center justify-between border-b border-stone-800 px-2 py-1 text-[11px]">
-      <span className="font-semibold uppercase tracking-wide text-stone-300">
-        router: <span className={router.loaded ? 'text-sky-300' : 'text-stone-500'}>{router.loaded ?? 'IDLE'}</span>
+      <span className="flex items-center">
+        <img src={iconUrl(router.loaded ? 'icon_router_active.png' : 'icon_router_off.png')} alt="" className="mr-1 h-[14px] w-[14px]" />
+        <span className="font-semibold uppercase tracking-wide text-stone-300">
+          router: <span className={router.loaded ? 'text-sky-300' : 'text-stone-500'}>{router.loaded ?? 'IDLE'}</span>
+        </span>
       </span>
       <span className="tabular-nums text-stone-500">{router.count} models</span>
     </div>
@@ -197,12 +260,20 @@ function KillTile({ pending, onTap }: { pending: string | null; onTap: (id: stri
     <div
       role="button"
       onClick={() => onTap('kill')}
-      className={`flex flex-col items-center justify-center border-l border-t border-stone-800 px-1 text-center active:brightness-90 ${
-        isPending ? 'bg-red-950' : ''
+      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center active:brightness-90 ${
+        isPending ? 'border-red-500' : 'border-stone-800'
       }`}
     >
-      <div className={`text-lg font-bold tracking-widest ${isPending ? 'text-red-300' : 'text-stone-400'}`}>KILL</div>
-      <div className="text-[9px] uppercase tracking-widest text-stone-600">{isPending ? 'CONFIRM?' : 'unload'}</div>
+      <img src={iconUrl(isPending ? 'icon_kill_active.png' : 'icon_kill_off.png')} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
+      <div style={{ ...FILL_STYLE, background: isPending ? 'rgba(12,10,9,0.4)' : 'rgba(12,10,9,0.68)' }} />
+      <div className="relative w-full px-1 pb-1">
+        <div className={`text-lg font-bold tracking-widest ${isPending ? 'text-red-300' : 'text-stone-100'}`} style={LABEL_SHADOW}>
+          KILL
+        </div>
+        <div className="text-[9px] uppercase tracking-widest text-stone-300" style={LABEL_SHADOW}>
+          {isPending ? 'CONFIRM?' : 'unload'}
+        </div>
+      </div>
     </div>
   )
 }
@@ -254,8 +325,9 @@ function DeviceInfoStrip({ device }: { device: DeviceBlock }) {
 type Props = { info: DeviceInfoState | null; reachable: boolean }
 
 /** Slot 4 -- 10 model tiles (live roster, never hardcoded) + KILL + a
- *  rotating device-info strip. Only the loaded model's tile lights, which
- *  makes KILL legible: it darkens everything. */
+ *  rotating device-info strip. Only the loaded model's tile shows the
+ *  brighter "active" art (lighter scrim, sky border), which is what makes
+ *  KILL legible: it darkens everything back to the "off" treatment. */
 export function ControlSlot({ info, reachable }: Props) {
   const { pending, tap, cancel } = useConfirm()
 
