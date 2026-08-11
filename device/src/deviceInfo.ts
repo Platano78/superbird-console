@@ -32,7 +32,18 @@ export type DeviceInfoState = {
 
 const DEVICEINFO_URL = 'http://127.0.0.1:8791/state'
 const POLL_MS = 5000
-const FETCH_TIMEOUT_MS = 2000
+// ⚠ MUST stay comfortably ABOVE the service's own per-source timeout (2000ms in
+// services/deviceinfo/server.js) and BELOW POLL_MS.
+//
+// This was 2000 — exactly equal to the server's — and it made the whole
+// degraded-state design unreachable. When any source is down, /state takes the
+// full 2.00s to answer (measured: 2.001s, 2.002s, 2.000s), so the client aborted
+// at the same instant the server replied and lost the race EVERY time. The UI
+// then showed "deviceinfo service unreachable" instead of the real state — i.e.
+// the one situation the honest per-source error reporting exists for was the one
+// situation it could never be seen in. Router down rendered as service down, and
+// the ROUTER start tile that fixes it was never drawn.
+const FETCH_TIMEOUT_MS = 4500
 
 /**
  * Polls the read-only deviceinfo service (services/deviceinfo/server.js,
