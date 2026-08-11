@@ -43,6 +43,7 @@ const OBLIGATIONS_CACHE_MS = 30_000
 const ADB = '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
 const CAR_THING_SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
 const ROUTER_CONTROL = '/home/youruser/project/llama-cpp-native/router-control.sh'
+const START_ROUTER = '/home/youruser/project/llama-cpp-native/start-router.sh'
 const DEVICE_CACHE_MS = 20_000
 // Not the 2s SOURCE_TIMEOUT_MS -- a model load is genuinely slow. This is a
 // safety net against a hung process, not a bound on the HTTP response (the
@@ -240,6 +241,12 @@ async function buildState() {
  *  router's own live roster (readFleetRouter -- same source /state uses,
  *  never a hardcoded list). */
 async function resolveAction(id) {
+  // Unlike `kill`/`load:`, these must NOT be gated behind readFleetRouter()
+  // .available -- `router:start` exists precisely for when the router is
+  // NOT reachable, so requiring it to be reachable first would make the
+  // one recovery action unreachable exactly when it's needed.
+  if (id === 'router:start') return { argv: [START_ROUTER, 'start'] }
+  if (id === 'router:stop') return { argv: [START_ROUTER, 'stop'] }
   // ⚠ `unload` REQUIRES a preset argument. router-control.sh:341 errors with
   // "Usage: router-control.sh unload <preset>" and returns 1 when called bare,
   // so a bare `unload` would have made KILL a guaranteed no-op failure. Resolve

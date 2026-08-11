@@ -118,6 +118,7 @@ function ArtModelTile({
   art,
   isLoaded,
   isPending,
+  disabled,
   onTap,
 }: {
   id: string
@@ -125,31 +126,44 @@ function ArtModelTile({
   art: string
   isLoaded: boolean
   isPending: boolean
+  disabled: boolean
   onTap: (id: string) => void
 }) {
+  // Router-down state: the service already 400s these, so make that visible
+  // rather than leaving a dead-looking-alive tile -- heavier scrim, muted
+  // label, no confirm arming (the onClick guard below is what actually
+  // prevents it firing; the visuals just make that true at a glance).
+  const lit = !disabled && isLoaded
   return (
     <div
       role="button"
-      onClick={() => onTap(id)}
-      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center active:brightness-90 ${
-        isLoaded ? 'border-sky-500' : 'border-stone-800'
-      }`}
+      onClick={() => {
+        if (!disabled) onTap(id)
+      }}
+      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center ${
+        disabled ? '' : 'active:brightness-90'
+      } ${lit ? 'border-sky-500' : 'border-stone-800'}`}
     >
       <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
-      <div style={{ ...FILL_STYLE, background: isLoaded ? 'rgba(12,10,9,0.45)' : 'rgba(12,10,9,0.68)' }} />
+      <div
+        style={{
+          ...FILL_STYLE,
+          background: disabled ? 'rgba(12,10,9,0.82)' : lit ? 'rgba(12,10,9,0.45)' : 'rgba(12,10,9,0.68)',
+        }}
+      />
       <div className="relative w-full px-1 pb-1">
         <div
-          className={`truncate font-semibold ${isLoaded ? 'text-sky-200' : 'text-stone-100'}`}
+          className={`truncate font-semibold ${disabled ? 'text-stone-500' : lit ? 'text-sky-200' : 'text-stone-100'}`}
           style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}
         >
           {name}
         </div>
-        {isPending ? (
+        {!disabled && isPending ? (
           <div className="text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
             CONFIRM?
           </div>
         ) : (
-          isLoaded && <div className="mx-auto mt-0.5 h-[2px] w-6 bg-sky-400" />
+          lit && <div className="mx-auto mt-0.5 h-[2px] w-6 bg-sky-400" />
         )}
       </div>
     </div>
@@ -163,27 +177,33 @@ function TextModelTile({
   id,
   loaded,
   pending,
+  disabled,
   onTap,
 }: {
   id: string
   loaded: string | null
   pending: string | null
+  disabled: boolean
   onTap: (id: string) => void
 }) {
   const { family, remainder } = familyOf(id)
-  const isLoaded = loaded === id
-  const isPending = pending === id
+  const lit = !disabled && loaded === id
+  const isPending = !disabled && pending === id
   return (
     <div
       role="button"
-      onClick={() => onTap(id)}
-      className={`flex flex-col items-center justify-center border-l border-t border-stone-800 px-1 text-center active:brightness-90 ${
-        isLoaded ? 'bg-sky-950' : ''
-      }`}
+      onClick={() => {
+        if (!disabled) onTap(id)
+      }}
+      className={`flex flex-col items-center justify-center border-l border-t border-stone-800 px-1 text-center ${
+        disabled ? '' : 'active:brightness-90'
+      } ${lit ? 'bg-sky-950' : ''}`}
     >
-      <div className={`text-[9px] uppercase tracking-widest ${isLoaded ? 'text-sky-300' : 'text-stone-500'}`}>{family}</div>
+      <div className={`text-[9px] uppercase tracking-widest ${disabled ? 'text-stone-700' : lit ? 'text-sky-300' : 'text-stone-500'}`}>
+        {family}
+      </div>
       <div
-        className={`mt-0.5 font-semibold ${isLoaded ? 'text-sky-300' : 'text-stone-100'}`}
+        className={`mt-0.5 font-semibold ${disabled ? 'text-stone-600' : lit ? 'text-sky-300' : 'text-stone-100'}`}
         style={{ fontSize: 12, lineHeight: 1.15, whiteSpace: 'normal', wordBreak: 'break-word' }}
       >
         {remainder}
@@ -191,7 +211,7 @@ function TextModelTile({
       {isPending ? (
         <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-300">CONFIRM?</div>
       ) : (
-        isLoaded && <div className="mt-1 h-[2px] w-6 bg-sky-400" />
+        lit && <div className="mt-1 h-[2px] w-6 bg-sky-400" />
       )}
     </div>
   )
@@ -201,15 +221,17 @@ function ModelTile({
   id,
   loaded,
   pending,
+  disabled,
   onTap,
 }: {
   id: string
   loaded: string | null
   pending: string | null
+  disabled: boolean
   onTap: (id: string) => void
 }) {
   const info = MODEL_INFO[id]
-  if (!info) return <TextModelTile id={id} loaded={loaded} pending={pending} onTap={onTap} />
+  if (!info) return <TextModelTile id={id} loaded={loaded} pending={pending} disabled={disabled} onTap={onTap} />
   const isLoaded = loaded === id
   const isPending = pending === id
   return (
@@ -219,6 +241,7 @@ function ModelTile({
       art={isLoaded ? info.active : info.inactive}
       isLoaded={isLoaded}
       isPending={isPending}
+      disabled={disabled}
       onTap={onTap}
     />
   )
@@ -254,25 +277,79 @@ function RouterStatusLine({ router }: { router: RouterInfo }) {
   )
 }
 
-function KillTile({ pending, onTap }: { pending: string | null; onTap: (id: string) => void }) {
-  const isPending = pending === 'kill'
+function KillTile({ pending, disabled, onTap }: { pending: string | null; disabled: boolean; onTap: (id: string) => void }) {
+  const isPending = !disabled && pending === 'kill'
   return (
     <div
       role="button"
-      onClick={() => onTap('kill')}
-      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center active:brightness-90 ${
-        isPending ? 'border-red-500' : 'border-stone-800'
-      }`}
+      onClick={() => {
+        if (!disabled) onTap('kill')
+      }}
+      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center ${
+        disabled ? '' : 'active:brightness-90'
+      } ${isPending ? 'border-red-500' : 'border-stone-800'}`}
     >
       <img src={iconUrl(isPending ? 'icon_kill_active.png' : 'icon_kill_off.png')} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
-      <div style={{ ...FILL_STYLE, background: isPending ? 'rgba(12,10,9,0.4)' : 'rgba(12,10,9,0.68)' }} />
+      <div style={{ ...FILL_STYLE, background: disabled ? 'rgba(12,10,9,0.82)' : isPending ? 'rgba(12,10,9,0.4)' : 'rgba(12,10,9,0.68)' }} />
       <div className="relative w-full px-1 pb-1">
-        <div className={`text-lg font-bold tracking-widest ${isPending ? 'text-red-300' : 'text-stone-100'}`} style={LABEL_SHADOW}>
+        <div
+          className={`text-lg font-bold tracking-widest ${disabled ? 'text-stone-600' : isPending ? 'text-red-300' : 'text-stone-100'}`}
+          style={LABEL_SHADOW}
+        >
           KILL
         </div>
-        <div className="text-[9px] uppercase tracking-widest text-stone-300" style={LABEL_SHADOW}>
+        <div className={`text-[9px] uppercase tracking-widest ${disabled ? 'text-stone-600' : 'text-stone-300'}`} style={LABEL_SHADOW}>
           {isPending ? 'CONFIRM?' : 'unload'}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/** The 12th cell: the one tile that is NEVER disabled by router-down, since
+ *  it's the recovery action for exactly that state. Toggle driven purely
+ *  off `fleet.router.available` -- no local state that could disagree with
+ *  the service. Label always spells out the action (START/STOP), never
+ *  just a state name, so there's no guessing which way a tap goes. */
+function RouterToggleTile({
+  available,
+  pending,
+  onTap,
+}: {
+  available: boolean
+  pending: string | null
+  onTap: (id: string) => void
+}) {
+  const actionId = available ? 'router:stop' : 'router:start'
+  const isPending = pending === actionId
+  return (
+    <div
+      role="button"
+      onClick={() => onTap(actionId)}
+      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center active:brightness-90 ${
+        available ? 'border-sky-500' : 'border-stone-800'
+      }`}
+    >
+      <img
+        src={iconUrl(available ? 'icon_router_active.png' : 'icon_router_off.png')}
+        alt=""
+        style={FILL_STYLE}
+        className="h-full w-full object-cover"
+      />
+      <div style={{ ...FILL_STYLE, background: available ? 'rgba(12,10,9,0.45)' : 'rgba(12,10,9,0.68)' }} />
+      <div className="relative w-full px-1 pb-1">
+        <div className={`font-semibold ${available ? 'text-sky-200' : 'text-stone-100'}`} style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}>
+          ROUTER
+        </div>
+        {isPending ? (
+          <div className="text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
+            CONFIRM?
+          </div>
+        ) : (
+          <div className="text-[9px] uppercase tracking-widest text-stone-300" style={LABEL_SHADOW}>
+            {available ? 'STOP' : 'START'}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -340,8 +417,12 @@ export function ControlSlot({ info, reachable }: Props) {
     )
   }
 
-  const { ids, loaded } = info.fleet.router
-  const fillerCount = ids.length > 0 ? (4 - ((ids.length + 1) % 4)) % 4 : 0
+  const { ids, loaded, available } = info.fleet.router
+  // Router-down: the service already 400s every model/kill action, so the
+  // grid goes inert and ROUTER (never gated) is the only live control.
+  const gridDisabled = !available
+  // +2 now, not +1 -- KILL and the new ROUTER toggle both occupy cells.
+  const fillerCount = ids.length > 0 ? (4 - ((ids.length + 2) % 4)) % 4 : 0
 
   return (
     <div className="flex h-full flex-col">
@@ -354,9 +435,10 @@ export function ControlSlot({ info, reachable }: Props) {
         }}
       >
         {ids.map((id) => (
-          <ModelTile key={id} id={id} loaded={loaded} pending={pending} onTap={tap} />
+          <ModelTile key={id} id={id} loaded={loaded} pending={pending} disabled={gridDisabled} onTap={tap} />
         ))}
-        <KillTile pending={pending} onTap={tap} />
+        <KillTile pending={pending} disabled={gridDisabled} onTap={tap} />
+        <RouterToggleTile available={available} pending={pending} onTap={tap} />
         {Array.from({ length: fillerCount }).map((_, i) => (
           <div key={`filler-${i}`} className="border-l border-t border-stone-800" />
         ))}
