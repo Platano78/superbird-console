@@ -20,6 +20,10 @@ const ACTION_URL = 'http://127.0.0.1:8791/action'
 // component. See CONTROL slice spec: "not security, cost."
 const CONFIRM_TIMEOUT_MS = 4000
 const ROTATE_MS = 4000
+// How long a tile stays in the transient ERROR treatment after a rejected
+// (non-2xx) or failed-to-send action, before settling back to its steady
+// state. NOT how loading ends -- that is driven purely by fleet.router.loading.
+const ERROR_FLASH_MS = 5000
 
 /** `agents-qwen35-9b` -> { family: 'AGENTS', remainder: 'qwen35-9b' } --
  *  kept only as the text-fallback path for a model id absent from
@@ -71,17 +75,22 @@ const ACTION_COOLDOWN_MS = 8000
  * them is a silent no-op.
  *
  * ⚠ Observed 2026-08-11: model tiles POSTed the bare model id and the service
- * answered `400 unknown action id: agents-qwen35-9b`. Because postAction is
+ * answered `400 unknown action id: agents-qwen35-9b`. Because postAction was
  * fire-and-forget with an empty catch, the UI showed nothing at all — model
  * loading had NEVER worked, and every DRYRUN gate passed because they were
- * curl'd with the correct `load:` form the UI does not send.
+ * curl'd with the correct `load:` form the UI does not send. That silence is
+ * also why the ERROR tone below exists now: a rejected action must be SEEN,
+ * not just logged.
  */
 function actionIdFor(tileId: string): string {
   if (tileId === 'kill' || tileId.startsWith('router:')) return tileId
   return `load:${tileId}`
 }
 
-function postAction(id: string) {
+/** `onFail`, when given, fires for a non-2xx response OR a network failure --
+ *  the two ways an action can silently do nothing. Callers use it to flash
+ *  the ERROR tone on the tile that was tapped (see useTransientError below). */
+function postAction(id: string, onFail?: () => void) {
   if (recentlyFired.has(id)) return
   recentlyFired.add(id)
   window.setTimeout(() => recentlyFired.delete(id), ACTION_COOLDOWN_MS)
@@ -98,18 +107,21 @@ function postAction(id: string) {
       if (!res.ok) {
         const body = await res.text().catch(() => '')
         console.error(`[action] ${id} REJECTED ${res.status} ${body.slice(0, 120)}`)
+        onFail?.()
       }
     })
     .catch((e) => {
       console.error(`[action] ${id} FAILED to send: ${e?.message ?? e}`)
+      onFail?.()
     })
 }
 
 /** One shared confirm-arming hook for every tile in the grid -- a single
  *  `pending` id and a single timer, not one timer per tile (the device has
  *  488MB RAM; per-tile timers is exactly the kind of retained-state cost
- *  the spec calls out to avoid). */
-function useConfirm() {
+ *  the spec calls out to avoid). `onFail(tileId)` is threaded through to
+ *  postAction so a rejected/failed second tap can flash that tile red. */
+function useConfirm(onFail: (tileId: string) => void) {
   const [pending, setPending] = useState<string | null>(null)
   const timer = useRef<number | null>(null)
 
@@ -125,7 +137,7 @@ function useConfirm() {
 
   const tap = (id: string) => {
     if (pending === id) {
-      postAction(actionIdFor(id))
+      postAction(actionIdFor(id), () => onFail(id))
       cancel()
       return
     }
@@ -137,6 +149,27 @@ function useConfirm() {
   return { pending, tap, cancel }
 }
 
+/** Transient ERROR flag -- one id, one timer, same shape as useConfirm above.
+ *  Cleared purely by its own timeout; nothing here reads router state, so a
+ *  slow-but-eventually-successful action doesn't get confused with a
+ *  rejected one -- it just stops being red after ERROR_FLASH_MS. */
+function useTransientError() {
+  const [errorId, setErrorId] = useState<string | null>(null)
+  const timer = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current)
+  }, [])
+
+  const flash = (id: string) => {
+    if (timer.current) window.clearTimeout(timer.current)
+    setErrorId(id)
+    timer.current = window.setTimeout(() => setErrorId(null), ERROR_FLASH_MS)
+  }
+
+  return { errorId, flash }
+}
+
 // Absolute-fill layers for the art + scrim -- explicit top/right/bottom/left,
 // not Tailwind's `inset-0` utility, to stay clear of the banned `inset`
 // shorthand CSS property regardless of how any given Tailwind version
@@ -144,66 +177,118 @@ function useConfirm() {
 const FILL_STYLE: CSSProperties = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }
 const LABEL_SHADOW: CSSProperties = { textShadow: '0 1px 3px rgba(0,0,0,0.9)' }
 
+/**
+ * Five-tone vocabulary, ported from the WigiDash LLM-launcher widget's own
+ * state machine (WidgetInstance.cs ~750-790: flashState 1/2/3 = launching
+ * (blue) / success (green) / error (red), layered on a steady Running
+ * (green) / idle (gray) border) -- not invented here. `confirm` (amber) is
+ * this app's own existing tap-to-arm convention, layered on top the same
+ * way flashState layers on the steady state in the reference.
+ *
+ * Precedence when more than one could apply: confirm > error > loading >
+ * loaded > idle. `loading` and `loaded` are driven ONLY by
+ * fleet.router.loading/.loaded (real router state, polled); `error` is
+ * driven ONLY by an actual rejected/failed fetch result, cleared by its own
+ * timer -- NEITHER is a guess about how long an operation takes.
+ */
+type Tone = 'confirm' | 'error' | 'loading' | 'loaded' | 'idle'
+const TONE_STYLE: Record<Tone, { border: string; scrimAlpha: number; label: string; sub: string }> = {
+  confirm: { border: 'border-amber-400', scrimAlpha: 0.4, label: 'text-amber-200', sub: 'text-amber-300' },
+  error: { border: 'border-red-500', scrimAlpha: 0.5, label: 'text-red-200', sub: 'text-red-300' },
+  loading: { border: 'border-sky-500', scrimAlpha: 0.45, label: 'text-sky-200', sub: 'text-sky-300' },
+  loaded: { border: 'border-emerald-500', scrimAlpha: 0.45, label: 'text-emerald-200', sub: 'text-emerald-400' },
+  idle: { border: 'border-stone-800', scrimAlpha: 0.68, label: 'text-stone-100', sub: 'text-stone-500' },
+}
+/** Idle gets the reference's thin (2px in the source) gray border; every
+ *  non-idle tone gets the thicker one -- width itself is a cue, not just
+ *  colour, same as the C# reference's width 2 (idle) vs width 3 (everything
+ *  else). */
+function borderWidthClass(tone: Tone) {
+  return tone === 'idle' ? 'border-l border-t' : 'border-l-2 border-t-2'
+}
+
+function toneFor({
+  isPending,
+  isError,
+  isLoading,
+  isLoaded,
+  disabled,
+}: {
+  isPending: boolean
+  isError: boolean
+  isLoading: boolean
+  isLoaded: boolean
+  disabled: boolean
+}): Tone {
+  if (disabled) return 'idle'
+  if (isPending) return 'confirm'
+  if (isError) return 'error'
+  if (isLoading) return 'loading'
+  if (isLoaded) return 'loaded'
+  return 'idle'
+}
+
 /** Full-bleed art tile for a model id present in MODEL_INFO. The source art
  *  is busy and bright at 256x256 shrunk into a ~190x100 tile -- the dark
- *  scrim is what keeps the label legible, not the art's own dimming (the
- *  inactive PNGs are already grayscale at source, but still get the
- *  HEAVIER scrim per the owner's ruling: not-loaded should read as more
- *  muted, not less -- loaded gets the lighter one as the "this is live"
- *  cue). No filters/blurs on the image itself -- a plain flat-colour
- *  overlay div is the entire treatment, cheap on 488MB. */
+ *  scrim is what keeps the label legible, not the art's own dimming. Active
+ *  art plays for loading AND loaded (both are "this model is live or about
+ *  to be"); inactive art plays for idle and error (error is "that attempt
+ *  did not make this model live"). No filters/blurs on the image itself --
+ *  a plain flat-colour overlay div is the entire treatment, cheap on 488MB. */
 function ArtModelTile({
   id,
   name,
-  art,
+  info,
   isLoaded,
+  isLoading,
   isPending,
+  isError,
   disabled,
   onTap,
 }: {
   id: string
   name: string
-  art: string
+  info: { active: string; inactive: string }
   isLoaded: boolean
+  isLoading: boolean
   isPending: boolean
+  isError: boolean
   disabled: boolean
   onTap: (id: string) => void
 }) {
-  // Router-down state: the service already 400s these, so make that visible
-  // rather than leaving a dead-looking-alive tile -- heavier scrim, muted
-  // label, no confirm arming (the onClick guard below is what actually
-  // prevents it firing; the visuals just make that true at a glance).
-  const lit = !disabled && isLoaded
+  const tone = toneFor({ isPending, isError, isLoading, isLoaded, disabled })
+  const style = TONE_STYLE[tone]
+  const art = tone === 'loading' || tone === 'loaded' ? info.active : info.inactive
   return (
     <div
       role="button"
       onClick={() => {
         if (!disabled) onTap(id)
       }}
-      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center ${
+      className={`relative flex flex-col items-center justify-end overflow-hidden text-center ${
         disabled ? '' : 'active:brightness-90'
-      } ${lit ? 'border-sky-500' : 'border-stone-800'}`}
+      } ${borderWidthClass(tone)} ${style.border}`}
     >
       <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
-      <div
-        style={{
-          ...FILL_STYLE,
-          background: disabled ? 'rgba(12,10,9,0.82)' : lit ? 'rgba(12,10,9,0.45)' : 'rgba(12,10,9,0.68)',
-        }}
-      />
+      <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${style.scrimAlpha})` }} />
       <div className="relative w-full px-1 pb-1">
-        <div
-          className={`truncate font-semibold ${disabled ? 'text-stone-500' : lit ? 'text-sky-200' : 'text-stone-100'}`}
-          style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}
-        >
+        <div className={`truncate font-semibold ${style.label}`} style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}>
           {name}
         </div>
-        {!disabled && isPending ? (
-          <div className="text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
+        {tone === 'confirm' ? (
+          <div className={`text-[10px] font-bold uppercase tracking-wide ${style.sub}`} style={LABEL_SHADOW}>
             CONFIRM?
           </div>
+        ) : tone === 'error' ? (
+          <div className={`text-[10px] font-bold uppercase tracking-wide ${style.sub}`} style={LABEL_SHADOW}>
+            FAILED
+          </div>
+        ) : tone === 'loading' ? (
+          <div className={`animate-breathe text-[9px] font-bold uppercase tracking-widest ${style.sub}`} style={LABEL_SHADOW}>
+            LOADING
+          </div>
         ) : (
-          lit && <div className="mx-auto mt-0.5 h-[2px] w-6 bg-sky-400" />
+          tone === 'loaded' && <div className="mx-auto mt-0.5 h-[2px] w-6 bg-emerald-400" />
         )}
       </div>
     </div>
@@ -211,47 +296,60 @@ function ArtModelTile({
 }
 
 /** Text-only fallback for a model id NOT in MODEL_INFO -- honest
- *  degradation, never placeholder art. Same look the whole grid had before
- *  this slice, minus the (now-removed) per-family SVG mark. */
+ *  degradation, never placeholder art. Same tone vocabulary as ArtModelTile,
+ *  just without the image layer. */
 function TextModelTile({
   id,
   loaded,
+  loading,
   pending,
+  errorId,
   disabled,
   onTap,
 }: {
   id: string
   loaded: string | null
+  loading: string | null
   pending: string | null
+  errorId: string | null
   disabled: boolean
   onTap: (id: string) => void
 }) {
   const { family, remainder } = familyOf(id)
-  const lit = !disabled && loaded === id
-  const isPending = !disabled && pending === id
+  const tone = toneFor({
+    isPending: pending === id,
+    isError: errorId === id,
+    isLoading: loading === id,
+    isLoaded: loaded === id,
+    disabled,
+  })
+  const style = TONE_STYLE[tone]
+  const bg = tone === 'confirm' ? 'bg-amber-950' : tone === 'error' ? 'bg-red-950' : tone === 'loading' ? 'bg-sky-950' : tone === 'loaded' ? 'bg-emerald-950' : ''
   return (
     <div
       role="button"
       onClick={() => {
         if (!disabled) onTap(id)
       }}
-      className={`flex flex-col items-center justify-center border-l border-t border-stone-800 px-1 text-center ${
+      className={`flex flex-col items-center justify-center border-stone-800 px-1 text-center ${
         disabled ? '' : 'active:brightness-90'
-      } ${lit ? 'bg-sky-950' : ''}`}
+      } ${borderWidthClass(tone)} ${bg}`}
     >
-      <div className={`text-[9px] uppercase tracking-widest ${disabled ? 'text-stone-700' : lit ? 'text-sky-300' : 'text-stone-500'}`}>
-        {family}
-      </div>
+      <div className={`text-[9px] uppercase tracking-widest ${style.sub}`}>{family}</div>
       <div
-        className={`mt-0.5 font-semibold ${disabled ? 'text-stone-600' : lit ? 'text-sky-300' : 'text-stone-100'}`}
+        className={`mt-0.5 font-semibold ${style.label}`}
         style={{ fontSize: 12, lineHeight: 1.15, whiteSpace: 'normal', wordBreak: 'break-word' }}
       >
         {remainder}
       </div>
-      {isPending ? (
+      {tone === 'confirm' ? (
         <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-300">CONFIRM?</div>
+      ) : tone === 'error' ? (
+        <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-red-300">FAILED</div>
+      ) : tone === 'loading' ? (
+        <div className="animate-breathe mt-1 text-[10px] font-bold uppercase tracking-wide text-sky-300">LOADING</div>
       ) : (
-        lit && <div className="mt-1 h-[2px] w-6 bg-sky-400" />
+        tone === 'loaded' && <div className="mt-1 h-[2px] w-6 bg-emerald-400" />
       )}
     </div>
   )
@@ -260,27 +358,31 @@ function TextModelTile({
 function ModelTile({
   id,
   loaded,
+  loading,
   pending,
+  errorId,
   disabled,
   onTap,
 }: {
   id: string
   loaded: string | null
+  loading: string | null
   pending: string | null
+  errorId: string | null
   disabled: boolean
   onTap: (id: string) => void
 }) {
   const info = MODEL_INFO[id]
-  if (!info) return <TextModelTile id={id} loaded={loaded} pending={pending} disabled={disabled} onTap={onTap} />
-  const isLoaded = loaded === id
-  const isPending = pending === id
+  if (!info) return <TextModelTile id={id} loaded={loaded} loading={loading} pending={pending} errorId={errorId} disabled={disabled} onTap={onTap} />
   return (
     <ArtModelTile
       id={id}
       name={info.name}
-      art={isLoaded ? info.active : info.inactive}
-      isLoaded={isLoaded}
-      isPending={isPending}
+      info={info}
+      isLoaded={loaded === id}
+      isLoading={loading === id}
+      isPending={pending === id}
+      isError={errorId === id}
       disabled={disabled}
       onTap={onTap}
     />
@@ -309,7 +411,7 @@ function RouterStatusLine({ router }: { router: RouterInfo }) {
       <span className="flex items-center">
         <img src={iconUrl(router.loaded ? 'icon_router_active.png' : 'icon_router_off.png')} alt="" className="mr-1 h-[14px] w-[14px]" />
         <span className="font-semibold uppercase tracking-wide text-stone-300">
-          router: <span className={router.loaded ? 'text-sky-300' : 'text-stone-500'}>{router.loaded ?? 'IDLE'}</span>
+          router: <span className={router.loaded ? 'text-emerald-300' : 'text-stone-500'}>{router.loaded ?? 'IDLE'}</span>
         </span>
       </span>
       <span className="tabular-nums text-stone-500">{router.count} models</span>
@@ -317,58 +419,106 @@ function RouterStatusLine({ router }: { router: RouterInfo }) {
   )
 }
 
-function KillTile({ pending, disabled, onTap }: { pending: string | null; disabled: boolean; onTap: (id: string) => void }) {
-  const isPending = !disabled && pending === 'kill'
+/**
+ * Owner, verbatim: "if I am seeing router stop doesn't it mean its running?"
+ * -- stacking a plain identity word ("ROUTER") over a plain verb ("STOP")
+ * reads as either "the state IS stopped" or "tap to stop"; it fails at a
+ * glance. Fix: the STATE is now a distinct bold word colour-coded by the
+ * same tone vocabulary as the model tiles (RUNNING=green, STOPPED=gray),
+ * and the ACTION is a separate glyph+word rendered as a small filled pill
+ * -- a shape nothing else on this tile has, so it can only read as "tap
+ * this". KILL gets the identical pill treatment for its action, per the
+ * owner's "make them consistent" -- KILL has no separate state to show (it
+ * IS the action), so only the pill part applies there. */
+function ActionPill({ label, tone }: { label: string; tone: 'go' | 'stop' }) {
+  return (
+    <div
+      className={`mt-0.5 inline-block rounded-sm px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-stone-50 ${
+        tone === 'go' ? 'bg-emerald-700' : 'bg-red-700'
+      }`}
+      style={LABEL_SHADOW}
+    >
+      {tone === 'go' ? '▶ ' : '■ '}
+      {label}
+    </div>
+  )
+}
+
+function KillTile({
+  pending,
+  errorId,
+  disabled,
+  onTap,
+}: {
+  pending: string | null
+  errorId: string | null
+  disabled: boolean
+  onTap: (id: string) => void
+}) {
+  const tone = toneFor({ isPending: pending === 'kill', isError: errorId === 'kill', isLoading: false, isLoaded: false, disabled })
   return (
     <div
       role="button"
       onClick={() => {
         if (!disabled) onTap('kill')
       }}
-      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center ${
+      className={`relative flex flex-col items-center justify-end overflow-hidden text-center ${
         disabled ? '' : 'active:brightness-90'
-      } ${isPending ? 'border-red-500' : 'border-stone-800'}`}
+      } ${borderWidthClass(tone)} ${TONE_STYLE[tone].border}`}
     >
-      <img src={iconUrl(isPending ? 'icon_kill_active.png' : 'icon_kill_off.png')} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
-      <div style={{ ...FILL_STYLE, background: disabled ? 'rgba(12,10,9,0.82)' : isPending ? 'rgba(12,10,9,0.4)' : 'rgba(12,10,9,0.68)' }} />
+      <img src={iconUrl(tone === 'confirm' ? 'icon_kill_active.png' : 'icon_kill_off.png')} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
+      <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${disabled ? 0.82 : TONE_STYLE[tone].scrimAlpha})` }} />
       <div className="relative w-full px-1 pb-1">
-        <div
-          className={`text-lg font-bold tracking-widest ${disabled ? 'text-stone-600' : isPending ? 'text-red-300' : 'text-stone-100'}`}
-          style={LABEL_SHADOW}
-        >
+        <div className={`text-lg font-bold tracking-widest ${disabled ? 'text-stone-600' : TONE_STYLE[tone].label}`} style={LABEL_SHADOW}>
           KILL
         </div>
-        <div className={`text-[9px] uppercase tracking-widest ${disabled ? 'text-stone-600' : 'text-stone-300'}`} style={LABEL_SHADOW}>
-          {isPending ? 'CONFIRM?' : 'unload'}
-        </div>
+        {tone === 'confirm' ? (
+          <div className="text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
+            CONFIRM?
+          </div>
+        ) : tone === 'error' ? (
+          <div className="text-[10px] font-bold uppercase tracking-wide text-red-300" style={LABEL_SHADOW}>
+            FAILED
+          </div>
+        ) : disabled ? (
+          <div className="mt-0.5 inline-block rounded-sm bg-stone-800 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-stone-500">
+            unload
+          </div>
+        ) : (
+          <ActionPill label="unload" tone="stop" />
+        )}
       </div>
     </div>
   )
 }
 
 /** The 12th cell: the one tile that is NEVER disabled by router-down, since
- *  it's the recovery action for exactly that state. Toggle driven purely
- *  off `fleet.router.available` -- no local state that could disagree with
- *  the service. Label always spells out the action (START/STOP), never
- *  just a state name, so there's no guessing which way a tap goes. */
+ *  it's the recovery action for exactly that state. STATE (RUNNING/STOPPED)
+ *  and ACTION (the pill) are driven purely off `fleet.router.available` --
+ *  no local state that could disagree with the service. */
 function RouterToggleTile({
   available,
   pending,
+  errorId,
   onTap,
 }: {
   available: boolean
   pending: string | null
+  errorId: string | null
   onTap: (id: string) => void
 }) {
   const actionId = available ? 'router:stop' : 'router:start'
   const isPending = pending === actionId
+  const isError = errorId === actionId
+  const border = isPending ? 'border-amber-400' : isError ? 'border-red-500' : available ? 'border-emerald-500' : 'border-stone-800'
+  const scrimAlpha = isPending || isError || available ? 0.45 : 0.68
   return (
     <div
       role="button"
       onClick={() => onTap(actionId)}
-      className={`relative flex flex-col items-center justify-end overflow-hidden border-l border-t text-center active:brightness-90 ${
-        available ? 'border-sky-500' : 'border-stone-800'
-      }`}
+      className={`relative flex flex-col items-center justify-end overflow-hidden text-center active:brightness-90 ${
+        isPending || isError || available ? 'border-l-2 border-t-2' : 'border-l border-t'
+      } ${border}`}
     >
       <img
         src={iconUrl(available ? 'icon_router_active.png' : 'icon_router_off.png')}
@@ -376,19 +526,23 @@ function RouterToggleTile({
         style={FILL_STYLE}
         className="h-full w-full object-cover"
       />
-      <div style={{ ...FILL_STYLE, background: available ? 'rgba(12,10,9,0.45)' : 'rgba(12,10,9,0.68)' }} />
+      <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
       <div className="relative w-full px-1 pb-1">
-        <div className={`font-semibold ${available ? 'text-sky-200' : 'text-stone-100'}`} style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}>
-          ROUTER
+        <div className="text-[9px] uppercase tracking-widest text-stone-400" style={LABEL_SHADOW}>
+          router
+        </div>
+        <div
+          className={`font-bold uppercase tracking-wide ${isError ? 'text-red-200' : available ? 'text-emerald-300' : 'text-stone-300'}`}
+          style={{ ...LABEL_SHADOW, fontSize: 13 }}
+        >
+          {isError ? 'FAILED' : available ? 'RUNNING' : 'STOPPED'}
         </div>
         {isPending ? (
-          <div className="text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
+          <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" style={LABEL_SHADOW}>
             CONFIRM?
           </div>
         ) : (
-          <div className="text-[9px] uppercase tracking-widest text-stone-300" style={LABEL_SHADOW}>
-            {available ? 'STOP' : 'START'}
-          </div>
+          <ActionPill label={available ? 'stop' : 'start'} tone={available ? 'stop' : 'go'} />
         )}
       </div>
     </div>
@@ -441,12 +595,13 @@ function DeviceInfoStrip({ device }: { device: DeviceBlock }) {
 
 type Props = { info: DeviceInfoState | null; reachable: boolean }
 
-/** Slot 4 -- 10 model tiles (live roster, never hardcoded) + KILL + a
- *  rotating device-info strip. Only the loaded model's tile shows the
- *  brighter "active" art (lighter scrim, sky border), which is what makes
- *  KILL legible: it darkens everything back to the "off" treatment. */
+/** Slot 4 -- 10 model tiles (live roster, never hardcoded) + KILL + ROUTER +
+ *  a rotating device-info strip. Five-tone vocabulary throughout: idle
+ *  (gray) / loading (blue, router-driven) / loaded (green) / error (red,
+ *  transient) / confirm (amber, local tap-arm) -- see TONE_STYLE above. */
 export function ControlSlot({ info, reachable }: Props) {
-  const { pending, tap, cancel } = useConfirm()
+  const { errorId, flash } = useTransientError()
+  const { pending, tap, cancel } = useConfirm(flash)
 
   if (!reachable || !info) {
     return (
@@ -457,11 +612,11 @@ export function ControlSlot({ info, reachable }: Props) {
     )
   }
 
-  const { ids, loaded, available } = info.fleet.router
+  const { ids, loaded, loading, available } = info.fleet.router
   // Router-down: the service already 400s every model/kill action, so the
   // grid goes inert and ROUTER (never gated) is the only live control.
   const gridDisabled = !available
-  // +2 now, not +1 -- KILL and the new ROUTER toggle both occupy cells.
+  // +2 -- KILL and the ROUTER toggle both occupy cells.
   const fillerCount = ids.length > 0 ? (4 - ((ids.length + 2) % 4)) % 4 : 0
 
   return (
@@ -475,10 +630,10 @@ export function ControlSlot({ info, reachable }: Props) {
         }}
       >
         {ids.map((id) => (
-          <ModelTile key={id} id={id} loaded={loaded} pending={pending} disabled={gridDisabled} onTap={tap} />
+          <ModelTile key={id} id={id} loaded={loaded} loading={loading} pending={pending} errorId={errorId} disabled={gridDisabled} onTap={tap} />
         ))}
-        <KillTile pending={pending} disabled={gridDisabled} onTap={tap} />
-        <RouterToggleTile available={available} pending={pending} onTap={tap} />
+        <KillTile pending={pending} errorId={errorId} disabled={gridDisabled} onTap={tap} />
+        <RouterToggleTile available={available} pending={pending} errorId={errorId} onTap={tap} />
         {Array.from({ length: fillerCount }).map((_, i) => (
           <div key={`filler-${i}`} className="border-l border-t border-stone-800" />
         ))}

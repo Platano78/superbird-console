@@ -64,18 +64,29 @@ async function fetchWithTimeout(url, ms) {
 }
 
 /** 1. Router model state -- which model (if any) is loaded, plus total count.
- *  "router up, nothing loaded" is a normal IDLE state, never an error. */
+ *  "router up, nothing loaded" is a normal IDLE state, never an error.
+ *  `loading` is the model whose live `status.value === 'loading'` (captured
+ *  on hardware mid-load: `{"value":"loading","args":[...],"preset":"..."}`)
+ *  -- the CONTROL tile's in-progress cue is driven off this, never a
+ *  client-side timer guessing when a load finishes. */
 async function readFleetRouter() {
   try {
     const res = await fetchWithTimeout(ROUTER_URL, SOURCE_TIMEOUT_MS)
-    if (!res.ok) return { available: false, loaded: null, count: null, ids: [], error: `http ${res.status}` }
+    if (!res.ok) return { available: false, loaded: null, loading: null, count: null, ids: [], error: `http ${res.status}` }
     const body = await res.json()
     const models = Array.isArray(body?.data) ? body.data : []
     const loadedEntry = models.find((m) => m?.status?.value === 'loaded')
+    const loadingEntry = models.find((m) => m?.status?.value === 'loading')
     const ids = models.map((m) => m?.id).filter(Boolean)
-    return { available: true, loaded: loadedEntry ? loadedEntry.id : null, count: models.length, ids }
+    return {
+      available: true,
+      loaded: loadedEntry ? loadedEntry.id : null,
+      loading: loadingEntry ? loadingEntry.id : null,
+      count: models.length,
+      ids,
+    }
   } catch (err) {
-    return { available: false, loaded: null, count: null, ids: [], error: String(err?.message ?? err) }
+    return { available: false, loaded: null, loading: null, count: null, ids: [], error: String(err?.message ?? err) }
   }
 }
 
