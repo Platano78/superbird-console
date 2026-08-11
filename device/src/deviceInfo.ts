@@ -42,6 +42,21 @@ export type DeviceInfoState = {
 
 const DEVICEINFO_URL = 'http://127.0.0.1:8791/state'
 const POLL_MS = 5000
+// Accelerated cadence for a short window after CONTROL fires an action --
+// closes the real-state gap (router-control.sh switch doesn't report
+// "loading" until it finishes unloading the previous model, measured +8s on
+// hardware) without hammering the service the rest of the time.
+const FAST_POLL_MS = 1000
+const FAST_POLL_WINDOW_MS = 15000
+// Module-level, not React state -- deliberately: this is read by the single
+// poll loop below on each tick, not something a component re-renders on.
+// ONE interval mechanism total (see the self-rescheduling setTimeout in
+// useDeviceInfo) -- this flag changes its cadence, it never spawns a second
+// timer that could drift out of sync with the first.
+let fastUntil = 0
+export function requestFastPoll() {
+  fastUntil = Date.now() + FAST_POLL_WINDOW_MS
+}
 // ⚠ MUST stay comfortably ABOVE the service's own per-source timeout (2000ms in
 // services/deviceinfo/server.js) and BELOW POLL_MS.
 //
@@ -72,6 +87,7 @@ export function useDeviceInfo() {
 
   useEffect(() => {
     let cancelled = false
+    let nextTimer: number | null = null
     async function poll() {
       if (inFlight.current) return
       inFlight.current = true
@@ -92,11 +108,21 @@ export function useDeviceInfo() {
         inFlight.current = false
       }
     }
-    poll()
-    const t = setInterval(poll, POLL_MS)
+    // Self-rescheduling setTimeout, not setInterval -- the ONLY timer this
+    // hook owns. Each next tick is scheduled after the previous poll
+    // resolves, so a slow request can never stack overlapping polls, and
+    // cadence can vary (fast window vs steady) without ever needing a
+    // second, independently-drifting timer.
+    async function tick() {
+      await poll()
+      if (cancelled) return
+      const delay = Date.now() < fastUntil ? FAST_POLL_MS : POLL_MS
+      nextTimer = window.setTimeout(tick, delay)
+    }
+    void tick()
     return () => {
       cancelled = true
-      clearInterval(t)
+      if (nextTimer !== null) window.clearTimeout(nextTimer)
     }
   }, [])
 

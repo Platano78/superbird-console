@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DeviceBlock, DeviceInfoState } from '../deviceInfo'
+import { requestFastPoll } from '../deviceInfo'
 
 // Icons are PLAIN RUNTIME STRINGS, resolved document-relative at render
 // time (`./icons/<file>` -> `iconUrl()` below) -- NOT ES-module asset
@@ -26,6 +27,13 @@ const ROTATE_MS = 4000
 // (non-2xx) or failed-to-send action, before settling back to its steady
 // state. NOT how loading ends -- that is driven purely by fleet.router.loading.
 const ERROR_FLASH_MS = 5000
+// How long LOCAL optimism ("I just tapped this") is allowed to stand in for
+// real router state before giving up and flashing an error. Generous on
+// purpose -- router-control.sh switch unloads the previous model first, and
+// that alone can take a while. This timer can ONLY cancel the local guess;
+// it is disarmed the instant real state (loading OR loaded) shows up, and
+// can never override or cancel an already-acknowledged load.
+const OPTIMISTIC_GIVEUP_MS = 45000
 
 /**
  * The CONTROL grid's shape, straight from services/deviceinfo/buttons.json
@@ -41,6 +49,7 @@ type ButtonConfig = {
   kind: 'model' | 'action' | 'toggle'
   expectedModel?: string
   requiresRouter?: boolean
+  requiresLoadedModel?: boolean
   confirm?: boolean
   icons: { active: string; inactive: string }
 }
@@ -100,6 +109,8 @@ function postAction(id: string, onFail?: () => void) {
   if (recentlyFired.has(id)) return
   recentlyFired.add(id)
   window.setTimeout(() => recentlyFired.delete(id), ACTION_COOLDOWN_MS)
+  // Close the real-state gap from the polling side too -- see deviceInfo.ts.
+  requestFastPoll()
   void fetch(ACTION_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -125,11 +136,11 @@ function postAction(id: string, onFail?: () => void) {
 /** One shared confirm-arming hook for every `confirm: true` button in the
  *  grid -- a single `pending` id and a single timer, not one timer per
  *  tile (the device has 488MB RAM; per-tile timers is exactly the kind of
- *  retained-state cost the spec calls out to avoid). Buttons without
- *  `confirm: true` (today: every model tile) fire immediately via
- *  `fireDirect` instead -- still routed through the same cooldown-guarded
- *  `postAction`. */
-function useConfirm(onFail: (tileId: string) => void) {
+ *  retained-state cost the spec calls out to avoid). Purely about the
+ *  arm/timeout state -- firing (postAction, optimistic-start, fast-poll)
+ *  is the caller's job, decided by `tap`'s return value: true means "this
+ *  was the confirming tap, fire now", false means "just armed". */
+function useConfirm() {
   const [pending, setPending] = useState<string | null>(null)
   const timer = useRef<number | null>(null)
 
@@ -143,20 +154,54 @@ function useConfirm(onFail: (tileId: string) => void) {
     setPending(null)
   }
 
-  const tap = (id: string) => {
+  const tap = (id: string): boolean => {
     if (pending === id) {
-      postAction(id, () => onFail(id))
       cancel()
-      return
+      return true
     }
     if (timer.current) window.clearTimeout(timer.current)
     setPending(id)
     timer.current = window.setTimeout(cancel, CONFIRM_TIMEOUT_MS)
+    return false
   }
 
-  const fireDirect = (id: string) => postAction(id, () => onFail(id))
+  return { pending, tap, cancel }
+}
 
-  return { pending, tap, fireDirect, cancel }
+/** Optimistic in-flight tracking for ONE model tile at a time (only one
+ *  model can ever be loading). The instant a fire happens locally, we know
+ *  it with zero uncertainty -- no reason to wait on a round trip to show
+ *  it. Ends the instant real state (loading OR loaded) matches -- see the
+ *  render-time guard in ModelTile, which self-corrects without waiting for
+ *  the effect below; the effect's only job is disarming OPTIMISTIC_GIVEUP_MS
+ *  so it can never fire against an acknowledged load. */
+function useOptimisticLoad() {
+  const [optimistic, setOptimistic] = useState<{ id: string; expectedModel: string } | null>(null)
+  const timer = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current)
+  }, [])
+
+  const start = (id: string, expectedModel: string, onGiveUp: (id: string) => void) => {
+    if (timer.current) window.clearTimeout(timer.current)
+    setOptimistic({ id, expectedModel })
+    timer.current = window.setTimeout(() => {
+      timer.current = null
+      setOptimistic(null)
+      onGiveUp(id)
+    }, OPTIMISTIC_GIVEUP_MS)
+  }
+
+  const clear = () => {
+    if (timer.current) {
+      window.clearTimeout(timer.current)
+      timer.current = null
+    }
+    setOptimistic(null)
+  }
+
+  return { optimistic, start, clear }
 }
 
 /** Transient ERROR flag -- one id, one timer, same shape as useConfirm above.
@@ -292,6 +337,7 @@ function ModelTile({
   pending,
   errorId,
   disabled,
+  optimisticId,
   onTap,
 }: {
   button: ButtonConfig
@@ -300,10 +346,17 @@ function ModelTile({
   pending: string | null
   errorId: string | null
   disabled: boolean
+  optimisticId: string | null
   onTap: (button: ButtonConfig) => void
 }) {
   const isLoaded = button.expectedModel !== undefined && loaded === button.expectedModel
-  const isLoading = button.expectedModel !== undefined && loading === button.expectedModel
+  const realLoading = button.expectedModel !== undefined && loading === button.expectedModel
+  // Optimism only fills the gap BEFORE real state has an opinion -- once
+  // either realLoading or isLoaded is true, this is false on the very same
+  // render (no dependency on the cleanup effect having run yet), so the
+  // loading->loaded handover can never show a stale blue frame.
+  const isOptimistic = optimisticId === button.id && !realLoading && !isLoaded
+  const isLoading = realLoading || isOptimistic
   const { tone, tappable } = resolveModelTile({
     isPending: pending === button.id,
     isError: errorId === button.id,
@@ -408,36 +461,46 @@ function ActionPill({ label, tone }: { label: string; tone: 'go' | 'stop' }) {
 }
 
 /** `kind: "action"` -- fires `button.argv` once (KILL today; the config
- *  allows more). No expectedModel, so no loaded/loading inert rule -- its
- *  eligibility is purely `!disabled` (router-down). */
+ *  allows more). No expectedModel, so no loaded/loading tone -- but it
+ *  reuses the SAME resolveModelTile decision as the model tiles for
+ *  eligibility, folding `requiresLoadedModel` into `disabled` rather than
+ *  a parallel branch: router-down and nothing-to-unload both collapse to
+ *  the one "inert" outcome that function already knows how to render. */
 function ActionTile({
   button,
   pending,
   errorId,
   disabled,
+  loaded,
   onTap,
 }: {
   button: ButtonConfig
   pending: string | null
   errorId: string | null
   disabled: boolean
+  loaded: string | null
   onTap: (button: ButtonConfig) => void
 }) {
-  const isPending = !disabled && pending === button.id
-  const isError = !disabled && errorId === button.id
-  const tone: Tone = isPending ? 'confirm' : isError ? 'error' : 'idle'
+  const effectiveDisabled = disabled || (button.requiresLoadedModel === true && !loaded)
+  const { tone, tappable } = resolveModelTile({
+    isPending: pending === button.id,
+    isError: errorId === button.id,
+    isLoading: false,
+    isLoaded: false,
+    disabled: effectiveDisabled,
+  })
   const style = TONE_STYLE[tone]
   return (
     <TileFrame
-      tappable={!disabled}
+      tappable={tappable}
       borderClass={`${borderWidthClass(tone)} ${style.border}`}
-      scrimAlpha={disabled ? 0.82 : style.scrimAlpha}
+      scrimAlpha={tappable ? style.scrimAlpha : 0.82}
       art={tone === 'confirm' ? button.icons.active : button.icons.inactive}
       onClick={() => {
-        if (!disabled) onTap(button)
+        if (tappable) onTap(button)
       }}
     >
-      <div className={`text-lg font-bold tracking-widest ${disabled ? 'text-stone-600' : style.label}`} style={LABEL_SHADOW}>
+      <div className={`text-lg font-bold tracking-widest ${tappable ? style.label : 'text-stone-600'}`} style={LABEL_SHADOW}>
         {button.displayName}
       </div>
       {tone === 'confirm' ? (
@@ -448,7 +511,7 @@ function ActionTile({
         <div className="text-[10px] font-bold uppercase tracking-wide text-red-300" style={LABEL_SHADOW}>
           FAILED
         </div>
-      ) : disabled ? (
+      ) : !tappable ? (
         <div className="mt-0.5 inline-block rounded-sm bg-stone-800 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-stone-500">
           {button.subLabel ?? ''}
         </div>
@@ -562,7 +625,20 @@ type Props = { info: DeviceInfoState | null; reachable: boolean }
 export function ControlSlot({ info, reachable }: Props) {
   const buttons = useButtonsConfig()
   const { errorId, flash } = useTransientError()
-  const { pending, tap, fireDirect, cancel } = useConfirm(flash)
+  const { pending, tap, cancel } = useConfirm()
+  const { optimistic, start: startOptimistic, clear: clearOptimistic } = useOptimisticLoad()
+
+  // Hand-over: once real state acknowledges the local guess (loading OR
+  // loaded now matches), disarm the giveup timer. Purely a cleanup concern
+  // -- ModelTile's render-time guard already self-corrects every frame
+  // regardless of whether this effect has run yet, so there is no visual
+  // dependency on its timing (see the comment there).
+  const routerLoading = info?.fleet.router.loading ?? null
+  const routerLoaded = info?.fleet.router.loaded ?? null
+  useEffect(() => {
+    if (!optimistic) return
+    if (routerLoading === optimistic.expectedModel || routerLoaded === optimistic.expectedModel) clearOptimistic()
+  }, [routerLoading, routerLoaded, optimistic?.expectedModel])
 
   if (!reachable || !info) {
     return (
@@ -587,9 +663,19 @@ export function ControlSlot({ info, reachable }: Props) {
   // buttons the config carries, not a fixed "10 models + 2" assumption.
   const fillerCount = buttons.length > 0 ? (4 - (buttons.length % 4)) % 4 : 0
 
+  // Optimistic-on-start, authoritative-on-end: the confirming tap is a fact
+  // we already know locally with zero uncertainty, so a `kind: "model"`
+  // tile goes blue/breathing THIS render, no round trip. It only ever
+  // LEAVES that state because real router state says so (ModelTile's own
+  // guard) or because OPTIMISTIC_GIVEUP_MS gave up -- never a fixed "it's
+  // probably done by now" timer standing in for real state.
   const onTap = (button: ButtonConfig) => {
-    if (button.confirm) tap(button.id)
-    else fireDirect(button.id)
+    const fires = button.confirm ? tap(button.id) : true
+    if (!fires) return
+    if (button.kind === 'model' && button.expectedModel) {
+      startOptimistic(button.id, button.expectedModel, (id) => flash(id))
+    }
+    postAction(button.id, () => flash(button.id))
   }
 
   return (
@@ -607,7 +693,9 @@ export function ControlSlot({ info, reachable }: Props) {
             return <ToggleTile key={button.id} button={button} available={available} pending={pending} errorId={errorId} onTap={onTap} />
           }
           if (button.kind === 'action') {
-            return <ActionTile key={button.id} button={button} pending={pending} errorId={errorId} disabled={gridDisabled} onTap={onTap} />
+            return (
+              <ActionTile key={button.id} button={button} pending={pending} errorId={errorId} disabled={gridDisabled} loaded={loaded} onTap={onTap} />
+            )
           }
           return (
             <ModelTile
@@ -618,6 +706,7 @@ export function ControlSlot({ info, reachable }: Props) {
               pending={pending}
               errorId={errorId}
               disabled={gridDisabled}
+              optimisticId={optimistic?.id ?? null}
               onTap={onTap}
             />
           )

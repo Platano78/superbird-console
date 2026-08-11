@@ -21,7 +21,10 @@
     "  toggle - argv when `off`, stopArgv when `on`. on-ness comes from routerAvailable.",
     "",
     "requiresRouter: true  -> tile goes inert while the router is unreachable (the service",
-    "                         400s these anyway; this makes it visible instead of silent)."
+    "                         400s these anyway; this makes it visible instead of silent).",
+    "requiresLoadedModel: true -> tile goes inert while nothing is loaded (kill: the service",
+    "                              400s 'no model loaded' anyway; same idea as requiresRouter,",
+    "                              added 2026-08-11 after KILL rendered live with nothing to kill)."
   ],
   "version": 1,
   "buttons": [
@@ -206,6 +209,7 @@
       ],
       "appendLoadedModel": true,
       "requiresRouter": true,
+      "requiresLoadedModel": true,
       "confirm": true,
       "icons": {
         "active": "icon_kill_active.png",
