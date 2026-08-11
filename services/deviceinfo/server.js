@@ -52,7 +52,24 @@ const DEVICE_CACHE_MS = 20_000
 // safety net against a hung process, not a bound on the HTTP response (the
 // response never waits on this; see the /action handler).
 const ACTION_HARD_TIMEOUT_MS = 5 * 60_000
-const ACTION_OUTPUT_CAP_BYTES = 8192
+// ⚠ NOT a cosmetic truncation limit. Node KILLS the child process when maxBuffer
+// is exceeded (ERR_CHILD_PROCESS_STDIO_MAXBUFFER), so this is really "how much
+// output an action is allowed to produce before we terminate it mid-run".
+//
+// Observed 2026-08-11 at 8192: a real `router-control.sh switch` blew past 8KB
+// (it narrates the unload, the wait-for-unload poll loop, then the load) and the
+// script was killed —
+//   id=reasoning-bonsai-27b-ternary ... exit=error(ERR_CHILD_PROCESS_STDIO_MAXBUFFER)
+// The switch SURVIVED only by luck: the heavy lifting happens inside the router
+// process, and the script had already issued its HTTP request before being shot.
+// A few hundred lines earlier and it would have unloaded the old model and died
+// before requesting the new one, leaving the router empty with no error visible
+// on the device.
+//
+// We never read this output — only the exit code is logged — so the cap exists
+// solely to bound memory. 4MB is far beyond any of these scripts' real output
+// while still refusing to buffer something pathological.
+const ACTION_OUTPUT_CAP_BYTES = 4 * 1024 * 1024
 
 /** Fetch with a hard timeout via AbortController -- never let a slow peer
  *  hold up the whole /state response. */
@@ -262,6 +279,8 @@ function invalidButtonReason(b) {
   if (!Array.isArray(b.argv)) return 'argv is not an array'
   if (b.kind === 'toggle' && !Array.isArray(b.stopArgv)) return 'toggle missing stopArgv array'
   if (!b.icons || typeof b.icons.active !== 'string' || typeof b.icons.inactive !== 'string') return 'missing icons.active/inactive'
+  if (b.requiresRouter !== undefined && typeof b.requiresRouter !== 'boolean') return 'requiresRouter must be boolean'
+  if (b.requiresLoadedModel !== undefined && typeof b.requiresLoadedModel !== 'boolean') return 'requiresLoadedModel must be boolean'
   return null
 }
 
@@ -416,13 +435,14 @@ const server = http.createServer(async (req, res) => {
     // The device never needs, and must never receive, argv/stopArgv -- it
     // sends an opaque id and never sees the command behind it.
     const buttons = (await loadButtons()).map(
-      ({ id, displayName, subLabel, kind, expectedModel, requiresRouter, confirm, icons }) => ({
+      ({ id, displayName, subLabel, kind, expectedModel, requiresRouter, requiresLoadedModel, confirm, icons }) => ({
         id,
         displayName,
         subLabel,
         kind,
         expectedModel,
         requiresRouter,
+        requiresLoadedModel,
         confirm,
         icons,
       }),
