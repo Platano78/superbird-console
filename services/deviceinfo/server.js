@@ -16,6 +16,7 @@
 
 const http = require('node:http')
 const fs = require('node:fs/promises')
+const path = require('node:path')
 const { execFile } = require('node:child_process')
 
 const PORT = 8791
@@ -42,8 +43,10 @@ const OBLIGATIONS_CACHE_MS = 30_000
 // caused once.
 const ADB = '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
 const CAR_THING_SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
-const ROUTER_CONTROL = '/home/youruser/project/llama-cpp-native/router-control.sh'
-const START_ROUTER = '/home/youruser/project/llama-cpp-native/start-router.sh'
+// The CONTROL grid's allowlist -- ARRAY ORDER IS GRID ORDER. See its own
+// _comment block for the schema; adding/reordering a button is a JSON edit,
+// not a code change. Host-side only, not device-writable.
+const BUTTONS_PATH = path.join(__dirname, 'buttons.json')
 const DEVICE_CACHE_MS = 20_000
 // Not the 2s SOURCE_TIMEOUT_MS -- a model load is genuinely slow. This is a
 // safety net against a hung process, not a bound on the HTTP response (the
@@ -246,37 +249,93 @@ async function buildState() {
   }
 }
 
-/** Enumerated allowlist: `kill` and `load:<live-model-id>` are the only two
- *  shapes. The id is never interpolated into a shell string -- it becomes
- *  one argv element to execFile, and only after being checked against the
- *  router's own live roster (readFleetRouter -- same source /state uses,
- *  never a hardcoded list). */
+/** One entry's shape, checked before it's trusted. Rejects (not crashes) a
+ *  malformed button so one bad entry can't take the whole grid down.
+ *  `icons` is required here (not left to the device to handle a missing
+ *  one) so the frontend can render every /config entry as full-bleed art
+ *  unconditionally -- no text-only fallback tile needed on that side. */
+function invalidButtonReason(b) {
+  if (!b || typeof b !== 'object') return 'not an object'
+  if (typeof b.id !== 'string' || !b.id) return 'missing/invalid id'
+  if (typeof b.displayName !== 'string' || !b.displayName) return 'missing/invalid displayName'
+  if (!['model', 'action', 'toggle'].includes(b.kind)) return `bad kind: ${b.kind}`
+  if (!Array.isArray(b.argv)) return 'argv is not an array'
+  if (b.kind === 'toggle' && !Array.isArray(b.stopArgv)) return 'toggle missing stopArgv array'
+  if (!b.icons || typeof b.icons.active !== 'string' || typeof b.icons.inactive !== 'string') return 'missing icons.active/inactive'
+  return null
+}
+
+/** Loads + validates buttons.json, re-reading only when its mtime changes
+ *  (stat is cheap; re-parsing every /state poll is not). A malformed file
+ *  or entry is logged loudly and degrades to an EMPTY button list -- never
+ *  a crash, never a guessed grid. */
+let buttonsCache = { mtimeMs: -1, buttons: [] }
+async function loadButtons() {
+  let stat
+  try {
+    stat = await fs.stat(BUTTONS_PATH)
+  } catch (err) {
+    console.error(`[buttons.json] not readable: ${err?.message ?? err}`)
+    buttonsCache = { mtimeMs: -1, buttons: [] }
+    return buttonsCache.buttons
+  }
+  if (stat.mtimeMs === buttonsCache.mtimeMs) return buttonsCache.buttons
+  try {
+    const raw = await fs.readFile(BUTTONS_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    const list = Array.isArray(parsed?.buttons) ? parsed.buttons : null
+    if (!list) throw new Error('"buttons" is not an array')
+    const ids = new Set()
+    const validated = []
+    for (const b of list) {
+      const reason = invalidButtonReason(b)
+      if (reason) {
+        console.error(`[buttons.json] rejecting entry (${reason}): ${JSON.stringify(b)}`)
+        continue
+      }
+      if (ids.has(b.id)) {
+        console.error(`[buttons.json] duplicate id "${b.id}", skipping`)
+        continue
+      }
+      ids.add(b.id)
+      validated.push(b)
+    }
+    buttonsCache = { mtimeMs: stat.mtimeMs, buttons: validated }
+  } catch (err) {
+    console.error(`[buttons.json] failed to parse: ${err?.message ?? err}`)
+    buttonsCache = { mtimeMs: -1, buttons: [] }
+  }
+  return buttonsCache.buttons
+}
+
+/** The button's `id` IS the action id -- one string, one meaning. No
+ *  namespacing convention to conflate (that was the `load:` bug). argv is
+ *  resolved entirely from the config; the client only ever supplies an
+ *  opaque id it never sees the command behind. */
 async function resolveAction(id) {
-  // Unlike `kill`/`load:`, these must NOT be gated behind readFleetRouter()
-  // .available -- `router:start` exists precisely for when the router is
-  // NOT reachable, so requiring it to be reachable first would make the
-  // one recovery action unreachable exactly when it's needed.
-  if (id === 'router:start') return { argv: [START_ROUTER, 'start'] }
-  if (id === 'router:stop') return { argv: [START_ROUTER, 'stop'] }
-  // ⚠ `unload` REQUIRES a preset argument. router-control.sh:341 errors with
-  // "Usage: router-control.sh unload <preset>" and returns 1 when called bare,
-  // so a bare `unload` would have made KILL a guaranteed no-op failure. Resolve
-  // it against whatever is actually loaded right now, and refuse cleanly when
-  // nothing is — "nothing to kill" is a normal state, not an error condition.
-  if (id === 'kill') {
-    const router = await readFleetRouter()
+  const buttons = await loadButtons()
+  const button = buttons.find((b) => b.id === id)
+  if (!button) return { error: `unknown action id: ${id}` }
+
+  const needsRouter = button.requiresRouter || button.kind === 'toggle' || button.appendLoadedModel
+  const router = needsRouter ? await readFleetRouter() : null
+
+  if (button.requiresRouter && !router.available) {
+    return { error: `router unreachable: ${router.error ?? 'unknown'}` }
+  }
+  if (button.kind === 'toggle') {
+    return { argv: router.available ? button.stopArgv : button.argv }
+  }
+  if (button.appendLoadedModel) {
+    // ⚠ `unload` REQUIRES a preset argument -- router-control.sh:341 errors
+    // "Usage: router-control.sh unload <preset>" and exits 1 when called
+    // bare. Append whatever is actually loaded right now, and refuse
+    // cleanly when nothing is -- "nothing to kill" is a normal state.
     if (!router.available) return { error: `router unreachable: ${router.error ?? 'unknown'}` }
     if (!router.loaded) return { error: 'no model loaded' }
-    return { argv: [ROUTER_CONTROL, 'unload', router.loaded] }
+    return { argv: [...button.argv, router.loaded] }
   }
-  if (typeof id === 'string' && id.startsWith('load:')) {
-    const modelId = id.slice('load:'.length)
-    const router = await readFleetRouter()
-    if (!router.available) return { error: `router unreachable: ${router.error ?? 'unknown'}` }
-    if (!router.ids.includes(modelId)) return { error: `unknown model id: ${modelId}` }
-    return { argv: [ROUTER_CONTROL, 'switch', modelId] }
-  }
-  return { error: `unknown action id: ${id}` }
+  return { argv: button.argv }
 }
 
 function logAction(id, argv, exitInfo) {
@@ -351,6 +410,25 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, JSON_HEADERS)
     res.end(JSON.stringify({ ok: true }))
+    return
+  }
+  if (req.method === 'GET' && req.url === '/config') {
+    // The device never needs, and must never receive, argv/stopArgv -- it
+    // sends an opaque id and never sees the command behind it.
+    const buttons = (await loadButtons()).map(
+      ({ id, displayName, subLabel, kind, expectedModel, requiresRouter, confirm, icons }) => ({
+        id,
+        displayName,
+        subLabel,
+        kind,
+        expectedModel,
+        requiresRouter,
+        confirm,
+        icons,
+      }),
+    )
+    res.writeHead(200, JSON_HEADERS)
+    res.end(JSON.stringify({ buttons }))
     return
   }
   if (req.method === 'GET' && req.url === '/state') {

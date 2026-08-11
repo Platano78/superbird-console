@@ -1,0 +1,235 @@
+{
+  "_comment": [
+    "CONTROL-slot button grid. Modelled directly on the WigiDash LLMLauncherWidget's",
+    "buttons.json (wigi-llm/wigidash/src/LLMLauncherWidget), which reads its config at",
+    "runtime instead of hardcoding a table. Same idea here: ARRAY ORDER IS GRID ORDER,",
+    "and adding / removing / reordering a button is a JSON edit — no rebuild, no redeploy",
+    "of the device app. Restart the kiosk to pick up changes:",
+    "  adb -s <serial> shell 'supervisorctl restart chromium'",
+    "",
+    "SECURITY: this file is the allowlist. The device NEVER sends a command — it sends a",
+    "button id, and the service maps it here. argv is an argv ARRAY, executed with",
+    "execFile and shell:false, so nothing is ever shell-interpreted. Keep it that way:",
+    "a string command here would reintroduce the injection surface the array form removes.",
+    "This file lives host-side and is not writable from the device.",
+    "",
+    "kind:",
+    "  model  - a router preset. expectedModel is matched against the router's loaded/",
+    "           loading ids to drive the active + loading treatments.",
+    "  action - fires argv once. appendLoadedModel appends the currently-loaded model id",
+    "           (router-control.sh unload REQUIRES a preset argument; a bare unload exits 1).",
+    "  toggle - argv when `off`, stopArgv when `on`. on-ness comes from routerAvailable.",
+    "",
+    "requiresRouter: true  -> tile goes inert while the router is unreachable (the service",
+    "                         400s these anyway; this makes it visible instead of silent)."
+  ],
+  "version": 1,
+  "buttons": [
+    {
+      "id": "agents-qwen35-9b",
+      "displayName": "Qwen3.5",
+      "kind": "model",
+      "expectedModel": "agents-qwen35-9b",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "agents-qwen35-9b"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_qwen35_active.png",
+        "inactive": "icon_qwen35_off.png"
+      }
+    },
+    {
+      "id": "coding-nouscoder-14b",
+      "displayName": "NousCoder",
+      "kind": "model",
+      "expectedModel": "coding-nouscoder-14b",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "coding-nouscoder-14b"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_glm_active.png",
+        "inactive": "icon_glm_off.png"
+      }
+    },
+    {
+      "id": "coding-qwen3-next",
+      "displayName": "QCN 80B",
+      "kind": "model",
+      "expectedModel": "coding-qwen3-next",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "coding-qwen3-next"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_qcn_active.png",
+        "inactive": "icon_qcn_off.png"
+      }
+    },
+    {
+      "id": "gemma4-26b",
+      "displayName": "Gemma4 26B",
+      "kind": "model",
+      "expectedModel": "gemma4-26b",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "gemma4-26b"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_gemma4_26b_active.png",
+        "inactive": "icon_gemma4_26b_inactive.png"
+      }
+    },
+    {
+      "id": "gemma4-31b",
+      "displayName": "Gemma4 31B",
+      "kind": "model",
+      "expectedModel": "gemma4-31b",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "gemma4-31b"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_gemma4_31b_active.png",
+        "inactive": "icon_gemma4_31b_inactive.png"
+      }
+    },
+    {
+      "id": "general-qwen36-35b",
+      "displayName": "Q3.6 35B",
+      "kind": "model",
+      "expectedModel": "general-qwen36-35b",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "general-qwen36-35b"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_qwen35_35b_active.png",
+        "inactive": "icon_qwen35_35b_off.png"
+      }
+    },
+    {
+      "id": "reasoning-bonsai-27b-ternary",
+      "displayName": "Bonsai 262K",
+      "kind": "model",
+      "expectedModel": "reasoning-bonsai-27b-ternary",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "reasoning-bonsai-27b-ternary"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_seedcoder_active.png",
+        "inactive": "icon_seedcoder_off.png"
+      }
+    },
+    {
+      "id": "reasoning-cascade2",
+      "displayName": "Cascade 2",
+      "kind": "model",
+      "expectedModel": "reasoning-cascade2",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "reasoning-cascade2"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_nemotron_active.png",
+        "inactive": "icon_nemotron_off.png"
+      }
+    },
+    {
+      "id": "reasoning-qwen36-27b-mtp",
+      "displayName": "Q3.6 27B MTP",
+      "kind": "model",
+      "expectedModel": "reasoning-qwen36-27b-mtp",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "reasoning-qwen36-27b-mtp"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_qwen35_35b_active.png",
+        "inactive": "icon_qwen35_35b_off.png"
+      }
+    },
+    {
+      "id": "reasoning-qwen36-27b-heretic-q3km-mtp",
+      "displayName": "Q3.6 27B DAU",
+      "kind": "model",
+      "expectedModel": "reasoning-qwen36-27b-heretic-q3km-mtp",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "switch",
+        "reasoning-qwen36-27b-heretic-q3km-mtp"
+      ],
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_davidau_active.png",
+        "inactive": "icon_davidau_inactive.png"
+      }
+    },
+    {
+      "id": "kill",
+      "displayName": "KILL",
+      "subLabel": "unload",
+      "kind": "action",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "unload"
+      ],
+      "appendLoadedModel": true,
+      "requiresRouter": true,
+      "confirm": true,
+      "icons": {
+        "active": "icon_kill_active.png",
+        "inactive": "icon_kill_off.png"
+      }
+    },
+    {
+      "id": "router",
+      "displayName": "ROUTER",
+      "kind": "toggle",
+      "argv": [
+        "/home/youruser/project/llama-cpp-native/start-router.sh",
+        "start"
+      ],
+      "stopArgv": [
+        "/home/youruser/project/llama-cpp-native/start-router.sh",
+        "stop"
+      ],
+      "requiresRouter": false,
+      "confirm": true,
+      "icons": {
+        "active": "icon_router_active.png",
+        "inactive": "icon_router_off.png"
+      }
+    }
+  ]
+}
