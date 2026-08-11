@@ -54,7 +54,21 @@ const MODEL_INFO: Record<string, { name: string; active: string; inactive: strin
   'reasoning-qwen36-27b-heretic-q3km-mtp': { name: 'Q3.6 27B DAU', active: 'icon_davidau_active.png', inactive: 'icon_davidau_inactive.png' },
 }
 
+/** Actions fired recently, to swallow duplicate fires of the SAME id.
+ *
+ * ⚠ Observed 2026-08-11: tapping ROUTER repeatedly (because a start looks like
+ * "nothing happened" for several seconds) fired router:start five times inside
+ * 0.7s. They raced each other on binding port 8081 and the losers died with
+ * "couldn't bind HTTP server socket" — so impatient tapping actively PREVENTED
+ * the start it was trying to cause. The service returns 202 immediately by
+ * design, so nothing else throttles this; the cooldown has to live here. */
+const recentlyFired = new Set<string>()
+const ACTION_COOLDOWN_MS = 8000
+
 function postAction(id: string) {
+  if (recentlyFired.has(id)) return
+  recentlyFired.add(id)
+  window.setTimeout(() => recentlyFired.delete(id), ACTION_COOLDOWN_MS)
   void fetch(ACTION_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
