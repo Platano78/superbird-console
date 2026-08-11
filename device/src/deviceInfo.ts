@@ -2,7 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 
 // `ids` is the router's live model roster -- ControlSlot renders its tiles
 // from this, never from a hardcoded list (the roster changes).
-export type RouterInfo = { available: boolean; loaded: string | null; count: number | null; ids: string[]; error?: string }
+// `loading` is the model id currently mid-load (router status.value ===
+// "loading"), or null when nothing is. Never inferred from a client-side
+// timer -- it ends only when /state reports the id has moved to `loaded`.
+export type RouterInfo = {
+  available: boolean
+  loaded: string | null
+  loading: string | null
+  count: number | null
+  ids: string[]
+  error?: string
+}
 export type CoderInfo = { reachable: boolean; error?: string }
 export type DiskReading = { freeKb: number; totalKb: number; usedPct: number } | null
 export type DiskInfo = { root: DiskReading; mntC: DiskReading; error?: string }
