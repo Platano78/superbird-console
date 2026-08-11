@@ -20,7 +20,10 @@ export function UsageRail({ usage }: { usage: Usage | null }) {
 
   return (
     <footer
-      className="h-[58px] shrink-0 border-t border-stone-800 bg-stone-950 px-2 py-1.5"
+      // overflow-hidden is load-bearing, not tidiness: the cell contents measured
+      // 2px past the 58px box (bottom 482 on a 480px panel), which lets a touch
+      // panel drag-scroll the whole kiosk. The screen must never scroll.
+      className="h-[58px] shrink-0 overflow-hidden border-t border-stone-800 bg-stone-950 px-2 py-1.5"
       style={{ display: 'grid', gridTemplateColumns: `repeat(${limits.length}, 1fr)`, gap: 12 }}
     >
       {limits.map((l) => {
