@@ -72,7 +72,14 @@ function SessionTile({
     <div
       role="button"
       onClick={() => onSelect(s.id)}
-      className="relative flex h-full min-w-0 flex-col items-center border-l border-stone-800 px-1 pt-2 first:border-l-0 active:brightness-90"
+      // overflow-hidden CLIPS THE BUSY SWEEP and is load-bearing. The sweep is
+      // absolute + w-1/4 + translateX(400%), so it travels past this column's
+      // right edge; the old card layout clipped it and that clip was lost when
+      // the cards were removed. Unclipped it makes document.body.scrollWidth
+      // exceed 800 mid-animation (measured 891), letting a touch panel drag the
+      // whole kiosk sideways — and only while a session is BUSY, which is why
+      // it reads as intermittent.
+      className="relative flex h-full min-w-0 flex-col items-center overflow-hidden border-l border-stone-800 px-1 pt-2 first:border-l-0 active:brightness-90"
     >
       {s.state === 'busy' && (
         <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 w-1/4 animate-sweep bg-sky-300/70" />

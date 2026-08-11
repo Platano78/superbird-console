@@ -4,28 +4,12 @@ import { AskCard } from './components/AskCard'
 import { SessionGrid } from './components/SessionGrid'
 import { SessionDetail } from './components/SessionDetail'
 import { UsageRail } from './components/UsageRail'
-import { PresetBar } from './components/PresetBar'
+import { TopBar } from './components/TopBar'
 import { FleetSlot } from './components/FleetSlot'
 import { QueueSlot } from './components/QueueSlot'
 import { ControlSlot } from './components/ControlSlot'
 import { useHardwareKeys } from './useHardwareKeys'
 import { useDeviceInfo } from './deviceInfo'
-
-/** A warning lamp only lights for data that actually exists in app state —
- *  no MCP-health/disk lamps yet, that data doesn't exist until slice 3. */
-function Lamp({ lit, color, label }: { lit: boolean; color: string; label: string }) {
-  return (
-    <span className="flex items-center" style={{ marginLeft: 10 }}>
-      <span
-        className="h-2 w-2 rounded-full"
-        style={{ background: lit ? color : '#44403c' }}
-      />
-      <span className={`ml-1 text-[10px] uppercase tracking-wide ${lit ? 'text-stone-300' : 'text-stone-700'}`}>
-        {label}
-      </span>
-    </span>
-  )
-}
 
 const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0, lastAskBySession: {} }
 
@@ -78,7 +62,7 @@ export default function App() {
     if (target) void daemon.current?.answer(target, decision)
   }
   // Single source of truth for slot switching — passed to both the hardware
-  // keys and the on-screen PresetBar, never duplicated between them.
+  // keys and the on-screen TopBar, never duplicated between them.
   const onSlotChange = (slot: number) => {
     setActiveSlot(slot)
     setOpenSessionId(null) // switching slots closes any open session detail
@@ -99,19 +83,16 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col bg-stone-950 text-stone-50">
-      <header className="flex h-[40px] shrink-0 items-center justify-between border-b border-stone-800 bg-stone-950 px-3">
-        <span className="flex items-baseline">
-          <span className="text-sm font-semibold tracking-wide text-stone-200">CLAUDE CODE</span>
-          <span className="ml-2 text-xs tabular-nums text-stone-500">{sessions.length} session{sessions.length === 1 ? '' : 's'}</span>
-        </span>
-        <span className="flex items-center">
-          <Lamp lit={limitPressure} color="#f87171" label="limit" />
-          <Lamp lit={state.connected} color="#34d399" label={state.connected ? 'online' : 'offline'} />
-          {state.asks.length > 1 && (
-            <span className="ml-3 text-xs text-amber-300">+{state.asks.length - 1} waiting</span>
-          )}
-        </span>
-      </header>
+      {/* Top edge, touching it, so each label sits under its physical preset
+          button — always rendered (never hidden for an ask/detail), same as
+          the header it replaces; only the limits rail below still hides. */}
+      <TopBar
+        activeSlot={activeSlot}
+        onSelect={onSlotChange}
+        limitPressure={limitPressure}
+        connected={state.connected}
+        waitingCount={state.asks.length - 1}
+      />
 
       <main className="min-h-0 flex-1">
         {selectedSession ? (
@@ -141,12 +122,7 @@ export default function App() {
 
       {/* Hidden while an ask or the detail view is up — answering/reading is
           the whole screen's job then. */}
-      {!ask && !selectedSession && (
-        <>
-          <UsageRail usage={state.usage} />
-          <PresetBar activeSlot={activeSlot} onSelect={onSlotChange} />
-        </>
-      )}
+      {!ask && !selectedSession && <UsageRail usage={state.usage} />}
     </div>
   )
 }
