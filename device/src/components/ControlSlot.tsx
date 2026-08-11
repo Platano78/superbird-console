@@ -65,6 +65,22 @@ const MODEL_INFO: Record<string, { name: string; active: string; inactive: strin
 const recentlyFired = new Set<string>()
 const ACTION_COOLDOWN_MS = 8000
 
+/**
+ * Tiles are keyed by MODEL id (so `pending` can match a tile), but the service
+ * takes NAMESPACED action ids. These are not the same string and conflating
+ * them is a silent no-op.
+ *
+ * ⚠ Observed 2026-08-11: model tiles POSTed the bare model id and the service
+ * answered `400 unknown action id: agents-qwen35-9b`. Because postAction is
+ * fire-and-forget with an empty catch, the UI showed nothing at all — model
+ * loading had NEVER worked, and every DRYRUN gate passed because they were
+ * curl'd with the correct `load:` form the UI does not send.
+ */
+function actionIdFor(tileId: string): string {
+  if (tileId === 'kill' || tileId.startsWith('router:')) return tileId
+  return `load:${tileId}`
+}
+
 function postAction(id: string) {
   if (recentlyFired.has(id)) return
   recentlyFired.add(id)
@@ -73,10 +89,20 @@ function postAction(id: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
-  }).catch(() => {
-    // Fire-and-forget by design -- the grid's own tile lighting (driven by
-    // the next /state poll) is the feedback channel, not this promise.
   })
+    .then(async (res) => {
+      // ⚠ Do NOT swallow a non-2xx. The response is not the success channel --
+      // the /state poll is -- but a REJECTED action produces no state change at
+      // all, so silence here is indistinguishable from "the button does
+      // nothing". That is exactly how the `load:` prefix bug above survived.
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        console.error(`[action] ${id} REJECTED ${res.status} ${body.slice(0, 120)}`)
+      }
+    })
+    .catch((e) => {
+      console.error(`[action] ${id} FAILED to send: ${e?.message ?? e}`)
+    })
 }
 
 /** One shared confirm-arming hook for every tile in the grid -- a single
@@ -99,7 +125,7 @@ function useConfirm() {
 
   const tap = (id: string) => {
     if (pending === id) {
-      postAction(id)
+      postAction(actionIdFor(id))
       cancel()
       return
     }
