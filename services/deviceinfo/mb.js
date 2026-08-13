@@ -9,6 +9,13 @@ let lastResult = null       // { id, ok, ms, error? } or null
 const MB_HOST = '192.0.2.10'
 const SOURCE_TIMEOUT_MS = 2000
 
+/** llama-server exposes /health; ComfyUI (:8188) has no such route — its 404
+ *  read as "not up" forever (observed: pcreate.start verify false-failed at
+ *  180s while the UI was serving). Root answers 200 there, so probe that. */
+function healthPath(port) {
+  return port === 8188 ? '/' : '/health'
+}
+
 /** Fetch with a hard timeout via AbortController -- reuses server.js pattern. */
 async function fetchWithTimeout(url, ms, init) {
   const ctrl = new AbortController()
@@ -184,7 +191,7 @@ async function verifyUp(id, port, totalStart, budgetMs) {
   switching && (switching.phase = 'health')
   while (Date.now() < deadline) {
     try {
-      const res = await fetchWithTimeout(`http://${MB_HOST}:${port}/health`, SOURCE_TIMEOUT_MS)
+      const res = await fetchWithTimeout(`http://${MB_HOST}:${port}${healthPath(port)}`, SOURCE_TIMEOUT_MS)
       if (res.ok) return true  // up achieved
     } catch (_) {
       // timeout or network error — keep polling
@@ -233,7 +240,7 @@ async function verifyDown(id, port, totalStart, budgetMs) {
 
   while (Date.now() < deadline) {
     try {
-      const res = await fetchWithTimeout(`http://${MB_HOST}:${port}/health`, SOURCE_TIMEOUT_MS)
+      const res = await fetchWithTimeout(`http://${MB_HOST}:${port}${healthPath(port)}`, SOURCE_TIMEOUT_MS)
       if (res.ok) {
         consecutiveFailures = 0  // reset on any success
       } else {

@@ -1,7 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { GaugeArc } from './GaugeArc'
 import type { DeviceInfoState } from '../deviceInfo'
 import { requestFastPoll } from '../deviceInfo'
+
+// Icons are PLAIN RUNTIME STRINGS, resolved document-relative at render
+// time -- NOT ES-module asset imports (see ControlSlot.tsx:5-16 for why
+// an asset-URL import statement blank-screens this Chromium 69 kiosk).
+function iconUrl(file: string) {
+  return `./icons/${file}`
+}
+
+// Absolute-fill layers for the art + scrim -- explicit top/right/bottom/left,
+// not `inset`, matching ControlSlot.tsx:228-232.
+const FILL_STYLE: CSSProperties = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }
 
 const ACTION_URL = 'http://127.0.0.1:8791/action'
 const CONFIRM_TIMEOUT_MS = 4000
@@ -39,12 +50,12 @@ function useConfirm() {
 type Props = { info: DeviceInfoState | null; reachable: boolean }
 
 const TILE_DEFS = [
-  { key: 'chat', label: 'CHAT', actionId: 'mb.profile.chat' },
-  { key: 'prod', label: 'PROD', actionId: 'mb.profile.prod' },
-  { key: 'pair', label: 'PAIR', actionId: 'mb.profile.pair' },
-  { key: 'dsv4f', label: 'DSV4F', actionId: 'mb.profile.dsv4f' },
-  { key: 'herald', labelBase: 'HERALD', actionIdSum: 'mb.herald.summon', actionIdDismiss: 'mb.herald.dismiss' },
-  { key: 'pcreate', labelBase: 'PCREATE', actionIdStart: 'mb.pcreate.start', actionIdStop: 'mb.pcreate.stop' },
+  { key: 'chat', label: 'CHAT', actionId: 'mb.profile.chat', icons: { active: 'icon_mb_chat_active.png', inactive: 'icon_mb_chat_inactive.png' } },
+  { key: 'prod', label: 'PROD', actionId: 'mb.profile.prod', icons: { active: 'icon_mb_prod_active.png', inactive: 'icon_mb_prod_inactive.png' } },
+  { key: 'pair', label: 'PAIR', actionId: 'mb.profile.pair', icons: { active: 'icon_mb_pair_active.png', inactive: 'icon_mb_pair_inactive.png' } },
+  { key: 'dsv4f', label: 'DSV4F', actionId: 'mb.profile.dsv4f', icons: { active: 'icon_mb_dsv4f_active.png', inactive: 'icon_mb_dsv4f_inactive.png' } },
+  { key: 'herald', labelBase: 'HERALD', actionIdSum: 'mb.herald.summon', actionIdDismiss: 'mb.herald.dismiss', icons: { active: 'icon_mb_herald_active.png', inactive: 'icon_mb_herald_inactive.png' } },
+  { key: 'pcreate', labelBase: 'PCREATE', actionIdStart: 'mb.pcreate.start', actionIdStop: 'mb.pcreate.stop', icons: { active: 'icon_mb_pcreate_active.png', inactive: 'icon_mb_pcreate_inactive.png' } },
 ]
 
 /** Fire an action: fast-poll then POST — fire-and-forget. */
@@ -130,6 +141,8 @@ export function MbSlot({ info, reachable }: Props) {
             || (isProd && currentProfile === 'prod')
             || (isPair && currentProfile === 'pair')
             || (isDsv4f && currentProfile === 'dsv4f')
+            || (isHerald && mb.herald)
+            || (isPcreate && mb.pcreate)
 
           const actionId = isHerald
             ? (mb.herald ? tile.actionIdDismiss! : tile.actionIdSum!)
@@ -144,24 +157,30 @@ export function MbSlot({ info, reachable }: Props) {
               : (tile as { label: string }).label
 
           const isPending = pending === actionId
-          const borderCls = isPending
-            ? 'border-amber-400'
-            : isActive
-              ? 'border-emerald-400'
-              : 'border-stone-800'
+          // Tone precedence pending > active > idle, mirroring ControlSlot's
+          // TONE_STYLE alphas -- border AND scrim alpha both follow it.
+          const borderCls = isPending ? 'border-amber-400' : isActive ? 'border-emerald-400' : 'border-stone-800'
+          const scrimAlpha = isPending ? 0.4 : isActive ? 0.45 : 0.68
+          const art = isActive ? tile.icons.active : tile.icons.inactive
+          // Only PROFILE tiles go inert when active (re-flipping to the current
+          // profile is a no-op). Herald/pcreate tiles stay tappable when active
+          // -- active IS the state where DISMISS/STOP must fire.
+          const isInert = isActive && !isHerald && !isPcreate
 
           return (
             <div
               key={tile.key}
-              className={`flex flex-col items-center justify-center border rounded ${borderCls} ${isActive ? 'cursor-default' : 'cursor-pointer'}`}
+              className={`relative flex flex-col items-center justify-center overflow-hidden border rounded ${borderCls} ${isInert ? 'cursor-default' : 'cursor-pointer'}`}
               onClick={() => {
-                if (isActive) return
+                if (isInert) return
                 if (tap(actionId)) fireAction(actionId)
               }}
             >
-              <div className="text-sm font-semibold uppercase tracking-widest text-stone-200">{displayLabel}</div>
+              <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
+              <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
+              <div className="relative text-sm font-semibold uppercase tracking-widest text-stone-200">{displayLabel}</div>
               {isPending && (
-                <div className="mt-0.5 text-[10px] uppercase tracking-widest text-amber-400">TAP AGAIN</div>
+                <div className="relative mt-0.5 text-[10px] uppercase tracking-widest text-amber-400">TAP AGAIN</div>
               )}
             </div>
           )
