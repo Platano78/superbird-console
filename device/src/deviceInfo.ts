@@ -32,11 +32,25 @@ export type DeviceDisk = { size: string; used: string; avail: string; usePct: st
 export type DeviceBlock =
   | { tempC: number | null; uptime: DeviceUptime; memory: DeviceMemory; disk: DeviceDisk; backlight: number | null; error?: undefined }
   | { error: string }
+export type MbSwitching = { id: string; target: string; phase: string; elapsedMs: number } | null
+export type MbLastResult = { id: string; ok: boolean; ms: number; error?: string } | null
+export type MbState = {
+  reachable: boolean
+  profile: 'chat' | 'prod' | 'pair' | 'dsv4f' | null
+  workerModel: string | null
+  seniorModel: string | null
+  herald: boolean
+  pcreate: boolean
+  switching: MbSwitching
+  lastResult: MbLastResult
+  error?: string
+}
 export type DeviceInfoState = {
   fleet: { router: RouterInfo; coder: CoderInfo }
   queue: QueueCounts
   system: { disk: DiskInfo }
   device: DeviceBlock
+  mb: MbState
   ts: number
 }
 

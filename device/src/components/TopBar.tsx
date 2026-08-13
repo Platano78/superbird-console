@@ -27,7 +27,7 @@ function Lamp({ lit, color, label }: { lit: boolean; color: string; label: strin
   )
 }
 
-const SLOTS = ['SESSIONS', 'FLEET', 'QUEUE', 'CONTROL']
+const SLOTS = ['SESSIONS', 'FLEET', 'MB', 'CONTROL']
 
 type Props = {
   activeSlot: number

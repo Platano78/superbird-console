@@ -6,7 +6,7 @@ import { SessionDetail } from './components/SessionDetail'
 import { UsageRail } from './components/UsageRail'
 import { TopBar } from './components/TopBar'
 import { FleetSlot } from './components/FleetSlot'
-import { QueueSlot } from './components/QueueSlot'
+import { MbSlot } from './components/MbSlot'
 import { ControlSlot } from './components/ControlSlot'
 import { useHardwareKeys } from './useHardwareKeys'
 import { useDeviceInfo } from './deviceInfo'
@@ -114,7 +114,7 @@ export default function App() {
         ) : activeSlot === 2 ? (
           <FleetSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         ) : activeSlot === 3 ? (
-          <QueueSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
+          <MbSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         ) : (
           <ControlSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         )}

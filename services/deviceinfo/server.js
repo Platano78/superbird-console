@@ -18,6 +18,7 @@ const http = require('node:http')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const { execFile } = require('node:child_process')
+const mb = require('./mb')
 
 const PORT = 8791
 const HOST = '127.0.0.1'
@@ -249,19 +250,21 @@ async function readDevice() {
 }
 
 async function buildState() {
-  const [router, coder, queueCounts, obligations, disk, device] = await Promise.all([
+  const [router, coder, queueCounts, obligations, disk, device, mbState] = await Promise.all([
     readFleetRouter(),
     readFleetCoder(),
     readQueueCounts(),
     readObligations(),
     readDisk(),
     readDevice(),
+    mb.readMbState(),
   ])
   return {
     fleet: { router, coder },
     queue: { ...queueCounts, obligations },
     system: { disk },
     device,
+    mb: mbState,
     ts: Date.now(),
   }
 }
@@ -470,6 +473,15 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400, JSON_HEADERS)
       res.end(JSON.stringify({ error: String(err?.message ?? err) }))
       return
+    }
+    if (typeof id === 'string' && id.startsWith('mb.')) {
+      if (process.env.CARTHING_ACTION_DRYRUN === '1') {
+        logAction(id, null, 'DRYRUN (mb, not spawned)')
+        res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify({ id, dryRun: true })); return
+      }
+      const out = await mb.runMbAction(id)
+      if (out.error) { logAction(id, null, `rejected(${out.error})`); res.writeHead(400, JSON_HEADERS); res.end(JSON.stringify({ error: out.error })); return }
+      res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify({ id })); return
     }
     const resolved = await resolveAction(id)
     if (resolved.error) {
