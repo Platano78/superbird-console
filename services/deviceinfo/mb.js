@@ -38,23 +38,29 @@ module.exports = { readMbState, runMbAction, __testCompletion: (port) => probeCo
  * Runs 3 probes in parallel, each with a 2000ms AbortController timeout.
  */
 async function readMbState() {
-  const [wRes, sRes, pRes] = await Promise.allSettled([
+  const [wRes, sRes, sidRes, pRes] = await Promise.allSettled([
     probeModels(8081),
     probeModels(8080),
+    probeModels(8082),
     probePcreate(),
   ])
 
   const workerModel = wRes.status === 'fulfilled' ? wRes.value : null
   const seniorModel = sRes.status === 'fulfilled' ? sRes.value : null
+  const sideModel = sidRes.status === 'fulfilled' ? sidRes.value : null
   const pcreate = pRes.status === 'fulfilled' && pRes.value
 
   const reachable = workerModel !== null || seniorModel !== null
 
   // Profile rules (substring tests on model id)
+  // ⚠ chat ALSO serves :8082 — swarm detection must match Ornith
+  // SPECIFICALLY on 8082, never mere port-presence.
   let profile = null
   if (workerModel) {
     if (workerModel.includes('gpt-oss-120b')) profile = 'chat'
-    else if (workerModel.includes('qwen36-35b') || workerModel.includes('Qwen3.6-35B')) profile = 'prod'
+    else if (workerModel.includes('qwen36-35b') || workerModel.includes('Qwen3.6-35B')) {
+      profile = sideModel && sideModel.includes('Ornith') ? 'swarm' : 'prod'
+    }
     else if (workerModel.includes('Ornith')) profile = 'pair'
   }
   if (profile === null && workerModel === null && seniorModel && seniorModel.includes('DeepSeek-V4-Flash')) {
@@ -71,6 +77,7 @@ async function readMbState() {
     profile,
     workerModel,
     seniorModel,
+    sideModel,
     herald,
     pcreate,
     switching: sw ? { id: sw.id, target: sw.target, phase: sw.phase, elapsedMs } : null,
@@ -85,6 +92,7 @@ async function runMbAction(id) {
   const ACTION_ALLOWLIST = {
     'mb.profile.chat':    { cmd: 'cd ~ && ./profile.sh chat',    ports: [8081], verifyType: 'completion' },
     'mb.profile.prod':    { cmd: 'cd ~ && ./profile.sh prod',    ports: [8081], verifyType: 'completion' },
+    'mb.profile.swarm':   { cmd: 'cd ~ && ./profile.sh swarm',   ports: [8081], verifyType: 'completion' },
     'mb.profile.pair':    { cmd: 'cd ~ && ./profile.sh pair',    ports: [8081], verifyType: 'completion' },
     'mb.profile.dsv4f':   { cmd: 'cd ~ && ./profile.sh dsv4f',   ports: [8080], verifyType: 'completion' },
     'mb.herald.summon':   { cmd: 'cd ~ && ./profile.sh herald',  ports: [8080], verifyType: 'completion' },

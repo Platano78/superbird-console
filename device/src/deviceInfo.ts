@@ -36,9 +36,10 @@ export type MbSwitching = { id: string; target: string; phase: string; elapsedMs
 export type MbLastResult = { id: string; ok: boolean; ms: number; error?: string } | null
 export type MbState = {
   reachable: boolean
-  profile: 'chat' | 'prod' | 'pair' | 'dsv4f' | null
+  profile: 'chat' | 'prod' | 'swarm' | 'pair' | 'dsv4f' | null
   workerModel: string | null
   seniorModel: string | null
+  sideModel: string | null
   herald: boolean
   pcreate: boolean
   switching: MbSwitching
