@@ -53,8 +53,11 @@ const TILE_DEFS = [
   { key: 'chat', label: 'CHAT', actionId: 'mb.profile.chat', icons: { active: 'icon_mb_chat_active.png', inactive: 'icon_mb_chat_inactive.png' } },
   { key: 'prod', label: 'PROD', actionId: 'mb.profile.prod', icons: { active: 'icon_mb_prod_active.png', inactive: 'icon_mb_prod_inactive.png' } },
   { key: 'pair', label: 'PAIR', actionId: 'mb.profile.pair', icons: { active: 'icon_mb_pair_active.png', inactive: 'icon_mb_pair_inactive.png' } },
+  // Display names are THEME, protocol ids are CONTRACT — leaf-deep stays leaf-deep on
+  // the wire (profile.sh leaf, action id); only the label wears the character.
   { key: 'leaf-deep', label: 'LEAF-DEEP', actionId: 'mb.profile.leaf-deep', icons: { active: 'icon_mb_leaf-deep_active.png', inactive: 'icon_mb_leaf-deep_inactive.png' } },
-  { key: 'herald', labelBase: 'HERALD', actionIdSum: 'mb.herald.summon', actionIdDismiss: 'mb.herald.dismiss', icons: { active: 'icon_mb_herald_active.png', inactive: 'icon_mb_herald_inactive.png' } },
+  { key: 'swarm', label: 'SWARM', actionId: 'mb.profile.swarm', icons: { active: 'icon_mb_swarm_active.png', inactive: 'icon_mb_swarm_inactive.png' } },
+  { key: 'herald', labelBase: 'SILVER SURFER', actionIdSum: 'mb.herald.summon', actionIdDismiss: 'mb.herald.dismiss', icons: { active: 'icon_mb_herald_active.png', inactive: 'icon_mb_herald_inactive.png' } },
   { key: 'pcreate', labelBase: 'PCREATE', actionIdStart: 'mb.pcreate.start', actionIdStop: 'mb.pcreate.stop', icons: { active: 'icon_mb_pcreate_active.png', inactive: 'icon_mb_pcreate_inactive.png' } },
 ]
 
@@ -93,7 +96,7 @@ export function MbSlot({ info, reachable }: Props) {
     const { target, phase, elapsedMs } = mb.switching
     return (
       <div className="flex h-full flex-col items-center justify-center">
-        <div className="text-xl font-semibold text-amber-400">SWITCHING → {target.toUpperCase()}</div>
+        <div className="text-xl font-semibold text-amber-400">SWITCHING → {target === 'leaf-deep' ? 'LEAF-DEEP' : target.toUpperCase()}</div>
         <div className="mt-2 text-sm text-amber-400">{phase} · {Math.round(elapsedMs / 1000)}s</div>
       </div>
     )
@@ -110,7 +113,8 @@ export function MbSlot({ info, reachable }: Props) {
   }
 
   const currentProfile = mb.profile
-  const profileLabel = currentProfile ? currentProfile.toUpperCase() : '--'
+  // Header wears the same display name as the tile (leaf-deep renders LEAF-DEEP).
+  const profileLabel = currentProfile === 'leaf-deep' ? 'LEAF-DEEP' : currentProfile ? currentProfile.toUpperCase() : '--'
 
   return (
     <div className="flex h-full flex-col" style={{ padding: '8px 12px' }}>
@@ -127,13 +131,14 @@ export function MbSlot({ info, reachable }: Props) {
         </div>
       </div>
 
-      {/* Tile grid: 3 cols × 2 rows */}
-      <div className="flex-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
+      {/* Tile grid: 4 cols × 2 rows */}
+      <div className="flex-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
         {TILE_DEFS.map((tile) => {
           const isChat = tile.key === 'chat'
           const isProd = tile.key === 'prod'
           const isPair = tile.key === 'pair'
           const isLeaf-deep = tile.key === 'leaf-deep'
+          const isSwarm = tile.key === 'swarm'
           const isHerald = tile.key === 'herald'
           const isPcreate = tile.key === 'pcreate'
 
@@ -141,6 +146,7 @@ export function MbSlot({ info, reachable }: Props) {
             || (isProd && currentProfile === 'prod')
             || (isPair && currentProfile === 'pair')
             || (isLeaf-deep && currentProfile === 'leaf-deep')
+            || (isSwarm && currentProfile === 'swarm')
             || (isHerald && mb.herald)
             || (isPcreate && mb.pcreate)
 
@@ -178,6 +184,12 @@ export function MbSlot({ info, reachable }: Props) {
             >
               <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
               <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
+              {/* Verb tiles (herald/pcreate) show WHAT they are above WHAT a
+                  tap does — the verb alone left the tile identifiable only by
+                  its art (owner feedback: "what is START?"). */}
+              {(isHerald || isPcreate) && (
+                <div className="relative text-[10px] uppercase tracking-widest text-stone-400">{(tile as { labelBase: string }).labelBase}</div>
+              )}
               <div className="relative text-sm font-semibold uppercase tracking-widest text-stone-200">{displayLabel}</div>
               {isPending && (
                 <div className="relative mt-0.5 text-[10px] uppercase tracking-widest text-amber-400">TAP AGAIN</div>
