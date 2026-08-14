@@ -61,6 +61,18 @@ const TILE_DEFS = [
   { key: 'pcreate', labelBase: 'PCREATE', actionIdStart: 'mb.pcreate.start', actionIdStop: 'mb.pcreate.stop', icons: { active: 'icon_mb_pcreate_active.png', inactive: 'icon_mb_pcreate_inactive.png' } },
 ]
 
+/** Display-only senior-seat occupancy label. Returns null for the 122B —
+ *  that case is the HERALD badge's, which means "summon overlay active"
+ *  (the SUMMON/DISMISS tile acts on it) and must not be diluted into
+ *  "senior seat occupied" (owner ruling 2026-08-14). */
+function seniorShort(m: string | null): string | null {
+  if (!m || m.includes('Qwen3.5-122B')) return null
+  if (m.includes('gpt-oss-120b')) return '120B'
+  if (m.includes('DeepSeek-V4-Flash')) return 'LEAF-DEEP'
+  const base = m.split('/').pop() ?? m
+  return base.replace(/\.gguf$/, '').slice(0, 10).toUpperCase()
+}
+
 /** Fire an action: fast-poll then POST — fire-and-forget. */
 function fireAction(id: string) {
   requestFastPoll()
@@ -122,6 +134,9 @@ export function MbSlot({ info, reachable }: Props) {
       <div className="flex shrink-0 items-center justify-between">
         <div className="text-3xl font-bold uppercase tracking-widest text-stone-50">{profileLabel}</div>
         <div className="flex">
+          {seniorShort(mb.seniorModel) && (
+            <div className="ml-2 rounded bg-stone-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-stone-400">SR · {seniorShort(mb.seniorModel)}</div>
+          )}
           {mb.herald && (
             <div className="ml-2 rounded bg-stone-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-stone-400">HERALD</div>
           )}
