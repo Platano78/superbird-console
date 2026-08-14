@@ -53,6 +53,9 @@ async function readMbState() {
   const reachable = workerModel !== null || seniorModel !== null
 
   // Profile rules (substring tests on model id)
+  // ⚠ TWO consumers of this truth table: this file and fleet-aggregator's mb-ensure.sh
+  //   current_leaf(). A fingerprint change here needs the same edit there
+  //   (route-backend.sh is immune — it routes by seat, never by model name).
   // ⚠ swarm detection must match Ornith SPECIFICALLY on 8082, never mere port-presence.
   // ⚠ chat RESEATED 2026-08-14: it is now Gemma-4-26B on the WORKER seat (:8081) +
   //   gpt-oss-120b on the SENIOR seat (:8080), and no longer uses :8082 at all. This test
