@@ -53,11 +53,14 @@ async function readMbState() {
   const reachable = workerModel !== null || seniorModel !== null
 
   // Profile rules (substring tests on model id)
-  // ⚠ chat ALSO serves :8082 — swarm detection must match Ornith
-  // SPECIFICALLY on 8082, never mere port-presence.
+  // ⚠ swarm detection must match Ornith SPECIFICALLY on 8082, never mere port-presence.
+  // ⚠ chat RESEATED 2026-08-14: it is now Gemma-4-26B on the WORKER seat (:8081) +
+  //   gpt-oss-120b on the SENIOR seat (:8080), and no longer uses :8082 at all. This test
+  //   used to key on gpt-oss@:8081 and silently reported "no profile" after the reseat.
+  //   swarm's Gemma sits on :8083, so 26B-on-:8081 is unique to chat.
   let profile = null
   if (workerModel) {
-    if (workerModel.includes('gpt-oss-120b')) profile = 'chat'
+    if (workerModel.includes('gemma-4-26B') || workerModel.includes('gemma4-26b')) profile = 'chat'
     else if (workerModel.includes('qwen36-35b') || workerModel.includes('Qwen3.6-35B')) {
       profile = sideModel && sideModel.includes('Ornith') ? 'swarm' : 'prod'
     }
