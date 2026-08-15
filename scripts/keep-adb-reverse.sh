@@ -10,7 +10,7 @@
 # both bind the same 127.0.0.1:5037 and they fight (device lists, then
 # "no devices/emulators found").
 
-ADB='/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
+ADB="${CAR_THING_ADB:-/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe}"
 INTERVAL="${INTERVAL:-30}"
 
 # ⚠ ALWAYS address the Car Thing by serial. A bare `adb reverse` aborts with

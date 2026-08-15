@@ -10,8 +10,10 @@
  * Claude Code gives up first and the device answers into a closed connection.
  */
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
-const SETTINGS = '/home/youruser/.claude/settings.json'
+const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json')
 const URL = 'http://127.0.0.1:8790/hook'
 const EVENTS = {
   PermissionRequest: 40,

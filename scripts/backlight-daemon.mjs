@@ -46,7 +46,7 @@ import os from 'node:os'
 // ADB must be the WINDOWS binary — see scripts/keep-adb-reverse.sh. The path
 // contains `deskthing` only because that's where the binary happens to live;
 // DeskThing itself is dropped from this project.
-const ADB = '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
+const ADB = process.env.CAR_THING_ADB || '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
 // ⚠ ALWAYS address the Car Thing by serial. A bare `adb shell` fails outright
 // with "error: more than one device/emulator" the moment ANY second device is
 // attached — a phone on wireless debugging is enough, and it took this service
