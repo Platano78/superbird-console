@@ -78,12 +78,30 @@ on the Car Thing, or it falls through to the normal terminal prompt.
 cd ~/project/car-thing/device && npm run build
 # stage to a Windows-reachable path, then push + restart the kiosk
 ```
-Device side (`/etc/supervisord.conf:51` already points at our app):
+Device side (`/etc/supervisord.conf:51` already points at our app) — **run these as four
+SEPARATE invocations, never chained with `&&`** (see the guard note below):
 ```
-mount -o remount,rw / ; rm -rf /usr/share/claude-thing/assets
+adb shell 'mount -o remount,rw /'
+adb shell 'rm -rf /usr/share/claude-thing/assets'
 adb push <dist>/. /usr/share/claude-thing/
 adb shell supervisorctl restart chromium
 ```
+
+🔴 **Do NOT chain the adb steps with `&&`.** The damage-control hook
+(`~/.claude/hooks/damage-control/bash-tool-damage-control.py`, `is_adb_shell_command`)
+already exempts `adb shell` and `adb push` from the host read-only-path guard — `/usr/...`
+in those commands is a path ON THE CAR THING and cannot touch the host. But the exemption
+**deliberately bails on any chained command**, because it cannot prove the second half of a
+chain is also remote (`adb shell foo && rm -rf /usr/x` genuinely would be local). Chain them
+and the whole line falls through to the host guard and is blocked as *"delete operation on
+read-only path /usr/"*.
+
+⚠ This is in direct tension with the "combine into one invocation" advice for a flaky ADB
+window (the internal status doc §Open). Resolution: combine `reverse`/`push`/read-only steps freely,
+but keep any command containing `rm` as its own unchained invocation. Cost of getting this
+wrong on 2026-08-15: a deploy that appeared to be blocked by an over-strict hook, and stale
+assets left on the device for the rest of the session. **The hook is correct — chaining was
+the defect.**
 
 ⚠ **`@vitejs/plugin-legacy` is REQUIRED**, not an optimisation — ES modules do not load over
 `file://` ("non-JavaScript MIME type of ''") and a default Vite build renders a **blank screen with
