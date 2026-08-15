@@ -92,15 +92,37 @@ no visible error**. On vite@5 use `@vitejs/plugin-legacy@^5` (v8 demands vite@8)
 ## Backlight attention channel
 
 There is **no speaker**, so light is the only out-of-band signal. `scripts/backlight-daemon.mjs`
-watches the daemon over the same WS protocol the device uses and drives
+has two inputs: it watches the daemon over the same WS protocol the device uses (sessions,
+permissions), and it polls `services/deviceinfo/server.js` (`:8791/state`, every 5s) for a failed
+fleet-host fleet action. Both feed one state machine that drives
 `/sys/class/backlight/aml-bl/brightness` (0–255) over `adb shell`.
 
 | State | Condition | Backlight |
 |---|---|---|
-| **ATTENTION** | `claude.queue.list` has ≥1 ask | pulse 90↔255, ~1.1 s cycle |
+| **ATTENTION** (permission) | `claude.queue.list` has ≥1 ask | pulse 90↔255, ~1.1 s cycle |
+| **FLEET_FAILURE** | `mb.lastResult.ok === false` latched (see below) | pulse 90↔255, ~2.2 s cycle — same range, slower cadence than ATTENTION |
 | **ACTIVE** | any session `state === 'busy'` | steady 235 |
 | **IDLE** | otherwise | steady 60 |
-| *disconnected* | WS down | forced steady 235 |
+| *disconnected* | claude-thing WS down | forced steady 235 |
+
+**Precedence (Ruling 13): ATTENTION always outranks FLEET_FAILURE.** A pending permission and a
+fleet failure can be true at once; the permission wins the backlight every time — checked first in
+`StateMachine#applyOnce()`. The fleet failure stays latched underneath (see below) and takes the
+light back over the instant the permission clears, if it hasn't itself been superseded by then.
+
+**FLEET_FAILURE latch/ack:** `:8791/state`'s `mb.lastResult` (`{ id, ok, ms, error? } | null`)
+carries no acknowledgement signal today, and this daemon does not invent one — no new endpoint.
+So a failure latches on `ok === false` and is treated as "acknowledged" only when `lastResult`
+honestly moves on: a **different id** appears (whatever its outcome) or the **same id** later
+reads `ok: true`. A self-clearing failure that nobody looked at will NOT un-latch — that's the
+exact failure mode this tier exists to kill. The device-side banner (Phase C) is what the operator
+actually dismisses on-screen; this daemon's latch is a separate, independent signal that happens
+to track the same underlying `lastResult`.
+
+**Unreachable `:8791` is NOT a fleet failure.** The deviceinfo service drops routinely (adb
+bounces) just like everything else on this transport; a poll that can't reach it leaves whatever
+latch state already exists untouched rather than pulsing. Crying wolf on every USB blip would
+drown out the signal this tier exists to carry.
 
 Plus an **edge-triggered** burst when a `week-*` limit crosses 90% — three quick full-range
 pulses, once. ⚠ Edge, not level: a weekly limit sits above 90% for *days*, so a level-triggered
@@ -152,13 +174,23 @@ the kernel capability bitmap plus a real press captured at both the evdev and DO
 | Preset 2 | `KEY_2` (3) | `Digit2` | question option 2 |
 | Preset 3 | `KEY_3` (4) | `Digit3` | question option 3 |
 | Preset 4 | `KEY_4` (5) | `Digit4` | **Deny** · question option 4 |
-| Dial press | `KEY_ENTER` (28) | `Enter` | **Allow** · question option 1 |
-| Back | `KEY_ESC` (1) | `Escape` | **deliberately inert** |
-| M / front | `KEY_M` (50) | `KeyM` | **deliberately inert** |
+| Dial press | `KEY_ENTER` (28) | `Enter` | **Allow** (ask pending) · fleet-nav confirm (no ask) |
+| Back | `KEY_ESC` (1) | `Escape` | closes an open session detail — **not** inert |
+| M / front | `KEY_M` (50) | `KeyM` | fleet-nav page cycle (no ask) |
+| Dial rotate | `rotary@0` | n/a | **not bound** — see the rotation warning below |
 
-⚠ **Back and M are unbound on purpose.** The back button sits where a hand lands when picking the
-device up, and a physical press answers a permission with no confirmation step. They are still
-logged, so a future session can see they arrive.
+⚠ **Back is bound, not inert.** `useHardwareKeys.ts` binds `Escape` to close an open session
+detail view (`onEscape`) whenever `hasOpenDetail` is true; with no detail open it's a logged noop.
+It bypasses every ask-answering guard on its own path, since closing a view can never grant a tool
+call.
+
+The dial press (`Enter`) and M now double as fleet-view controls on slot 3, but **only when no ask
+is pending** — with an ask up, `Enter` stays `Allow` (question option 1) and M stays a logged noop,
+exactly like every other key on the ask path. With no ask pending: `Enter` confirms the cursor's
+fleet action (armed by the same two-tap confirm the touch tiles use), M cycles the fleet view's
+three pages (SEATS → LEAVES → AUX), and the dial's *rotation* — once bridged, see below — moves the
+cursor. These three are wired through `onNav`/`onPage`/`onConfirm` in `useHardwareKeys.ts` and are
+active only while slot 3 (FLEET-HOST) is the displayed slot.
 
 Four guards in `device/src/useHardwareKeys.ts`, each preventing a real misfire:
 auto-repeat ignored (holding a button must not fire twice) · a **250 ms arm delay** after an ask
@@ -166,15 +198,24 @@ appears (a press already in flight must not blind-answer a card that just popped
 per ask id** (the daemon round-trip is async and the card lingers) · a 150 ms `ring-2` flash on the
 control that fired, because `active:` states never trigger for key input.
 
-⚠ **The rotary dial's *rotation* is not bound and is not a listener job.** `rotary@0` reports
-`Handlers=event1` with **no `kbd`** — Chromium cannot see it. It needs an evdev→uinput bridge.
+⚠ **The rotary dial's *rotation* is still invisible to Chromium.** `rotary@0` reports
+`Handlers=event1` with **no `kbd`** — the kernel never turns a physical turn into a `keydown` this
+app can see. The fix is specced as Phase A (the internal fleet-view spec): a host-side
+bridge (`scripts/rotary-bridge.mjs`, sibling of `backlight-daemon.mjs`) that decodes
+`/dev/input/eventN` over `adb shell` and injects `ArrowUp`/`ArrowDown` via CDP
+`Input.dispatchKeyEvent`. **It is not built.** Do not read the dial press (`Enter`) as evidence the
+dial works — that key comes from `KEY_ENTER`, a distinct evdev source from the rotary's rotation
+events, and is unaffected by this gap. Until Phase A lands, the fleet view's page/cursor nav works
+from M + touch only (Ruling 4, the internal fleet-view spec) — that is a deliberate design property,
+not a placeholder.
 
 ### Debugging: `window.__klog`
 
 The app keeps a bounded 50-entry ring buffer of every key it sees, `{code,key,repeat,t,action}`,
 where `action` records the decision (`allow`, `deny`, `option:2`, `ignored:repeat`,
-`ignored:arming`, `ignored:already-answered`, `noop:no-ask`, `noop`). It is the only key-level
-feedback loop on this device — read it over CDP with `Runtime.evaluate`.
+`ignored:arming`, `ignored:already-answered`, `noop:no-ask`, `noop`, and — no-ask branch only —
+`nav:confirm`, `nav:up`, `nav:down`, `nav:page`). It is the only key-level feedback loop on this
+device — read it over CDP with `Runtime.evaluate`.
 
 ### Injecting a real permission to test with
 

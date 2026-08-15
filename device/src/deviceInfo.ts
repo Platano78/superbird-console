@@ -32,8 +32,52 @@ export type DeviceDisk = { size: string; used: string; avail: string; usePct: st
 export type DeviceBlock =
   | { tempC: number | null; uptime: DeviceUptime; memory: DeviceMemory; disk: DeviceDisk; backlight: number | null; error?: undefined }
   | { error: string }
-export type MbSwitching = { id: string; target: string; phase: string; elapsedMs: number } | null
+export type MbSwitching = {
+  id: string
+  target: string
+  phase: 'launch' | 'health' | 'completion' | 'down'
+  elapsedMs: number
+  startedAtMs: number
+  budgetMs: number
+} | null
 export type MbLastResult = { id: string; ok: boolean; ms: number; error?: string } | null
+
+// Seats -- the persistent objects (route by SEAT, never by model name). Two
+// of them, always present even when down: an absent seat and an empty seat
+// must be distinguishable from a dropped field. See
+// the fleet-state contract §2.
+export type SeatId = 'worker' | 'senior'
+export type SeatState = {
+  seat: SeatId
+  port: 8081 | 8080
+  up: boolean
+  occupant: string | null
+  /** Server-computed, <=12 chars, already uppercase -- this is what a tile
+   *  renders; `occupant` (the full model id) is detail-page-only. */
+  occupantShort: string | null
+  /** Per-seat staleness anchor -- subtract from DeviceInfoState.serverNowMs,
+   *  never Date.now() (the device clock is not synced). */
+  probedAtMs: number | null
+  error: string | null
+}
+
+// Leaves -- the transitions between seat occupancies, i.e. the verbs. Roster
+// is server-enumerated, never hardcoded on device (the fleet-state contract §2).
+export type LeafId = 'chat' | 'prod' | 'pair' | 'swarm' | 'dsv4f' | 'q38' | 'q38h'
+export type LeafTier = 'daily' | 'ready-for-duty'
+export type LeafState = {
+  /** Wire id -- display names are theme (dsv4f renders GALACTUS), ids stay contract. */
+  id: LeafId
+  active: boolean
+  tier: LeafTier
+  /** Carries 'uncensored' for q38h -- drives the distinct tone (Ruling 7). */
+  flags: string[]
+  seats: SeatId[]
+}
+
+// Aux lanes -- read-only liveness this pass (Ruling 8); no start/stop verbs.
+export type AuxState = { id: string; port: number; up: boolean; probedAtMs: number | null }
+
 export type MbState = {
   reachable: boolean
   profile: 'chat' | 'prod' | 'swarm' | 'pair' | 'dsv4f' | null
@@ -44,6 +88,9 @@ export type MbState = {
   pcreate: boolean
   switching: MbSwitching
   lastResult: MbLastResult
+  seats: SeatState[]
+  leaves: LeafState[]
+  aux: AuxState[]
   error?: string
 }
 export type DeviceInfoState = {
@@ -53,6 +100,10 @@ export type DeviceInfoState = {
   device: DeviceBlock
   mb: MbState
   ts: number
+  /** Explicit "server now", required at the top level -- the device anchors
+   *  every staleness/age computation on this, never Date.now() (the device
+   *  clock is not synced). See the fleet-state contract §4. */
+  serverNowMs: number
 }
 
 const DEVICEINFO_URL = 'http://127.0.0.1:8791/state'

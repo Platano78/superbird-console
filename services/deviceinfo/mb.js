@@ -3,7 +3,7 @@
 const { execFile } = require('node:child_process')
 
 // Module-level state
-let switching = null        // { id, target, phase, startedAt } or null
+let switching = null        // { id, target, phase, startedAt, budgetMs } or null
 let lastResult = null       // { id, ok, ms, error? } or null
 
 const MB_HOST = '192.0.2.10'
@@ -35,20 +35,34 @@ module.exports = { readMbState, runMbAction, __testCompletion: (port) => probeCo
 
 /**
  * readMbState() → Promise<object>, NEVER throws/rejects.
- * Runs 3 probes in parallel, each with a 2000ms AbortController timeout.
+ * Runs 7 probes in parallel (2 seats + 1 swarm side-model + 4 aux lanes),
+ * each with a 2000ms AbortController timeout.
  */
 async function readMbState() {
-  const [wRes, sRes, sidRes, pRes] = await Promise.allSettled([
+  const [wRes, sRes, sidRes, auxFlmRes, auxTtsRes, auxPyRes, auxPcreateRes] = await Promise.allSettled([
     probeModels(8081),
     probeModels(8080),
     probeModels(8082),
-    probePcreate(),
+    probeAux(8091),
+    probeAux(8092),
+    probeAux(8093),
+    probeAux(8188),
   ])
 
-  const workerModel = wRes.status === 'fulfilled' ? wRes.value : null
-  const seniorModel = sRes.status === 'fulfilled' ? sRes.value : null
-  const sideModel = sidRes.status === 'fulfilled' ? sidRes.value : null
-  const pcreate = pRes.status === 'fulfilled' && pRes.value
+  const rejectedProbe = { up: false, id: null, error: 'probe rejected', probedAtMs: Date.now() }
+  const rejectedAux = { up: false, probedAtMs: Date.now() }
+  const worker = wRes.status === 'fulfilled' ? wRes.value : rejectedProbe
+  const senior = sRes.status === 'fulfilled' ? sRes.value : rejectedProbe
+  const side = sidRes.status === 'fulfilled' ? sidRes.value : rejectedProbe
+  const auxFlm = auxFlmRes.status === 'fulfilled' ? auxFlmRes.value : rejectedAux
+  const auxTts = auxTtsRes.status === 'fulfilled' ? auxTtsRes.value : rejectedAux
+  const auxPy = auxPyRes.status === 'fulfilled' ? auxPyRes.value : rejectedAux
+  const auxPcreate = auxPcreateRes.status === 'fulfilled' ? auxPcreateRes.value : rejectedAux
+
+  const workerModel = worker.id
+  const seniorModel = senior.id
+  const sideModel = side.id
+  const pcreate = auxPcreate.up
 
   const reachable = workerModel !== null || seniorModel !== null
 
@@ -68,6 +82,13 @@ async function readMbState() {
       profile = sideModel && sideModel.includes('Ornith') ? 'swarm' : 'prod'
     }
     else if (workerModel.includes('Ornith')) profile = 'pair'
+    // 🔴 ORDERING TRAP -- q38h's model path ("/models/qwen38-27b-heretic/
+    // Qwen3.8-27B-heretic-ara.i1-Q6_K.gguf") CONTAINS both of q38's unique
+    // substrings ("qwen38-27b" AND "Qwen3.8-27B"). `heretic` MUST be tested
+    // BEFORE either q38 substring or the uncensored leaf silently reports as
+    // the stock one. Do not reorder these two branches.
+    else if (workerModel.includes('heretic')) profile = 'q38h'
+    else if (workerModel.includes('qwen38-27b') || workerModel.includes('Qwen3.8-27B')) profile = 'q38'
   }
   if (profile === null && workerModel === null && seniorModel && seniorModel.includes('DeepSeek-V4-Flash')) {
     profile = 'dsv4f'
@@ -78,6 +99,22 @@ async function readMbState() {
   const sw = switching
   const elapsedMs = sw ? Date.now() - sw.startedAt : undefined
 
+  const seats = [
+    { seat: 'worker', port: 8081, up: worker.up, occupant: workerModel, occupantShort: occupantShort(workerModel), probedAtMs: worker.probedAtMs, error: worker.error },
+    { seat: 'senior', port: 8080, up: senior.up, occupant: seniorModel, occupantShort: occupantShort(seniorModel), probedAtMs: senior.probedAtMs, error: senior.error },
+  ]
+
+  const leaves = Object.entries(LEAF_META).map(([id, meta]) => ({
+    id, active: profile === id, tier: meta.tier, flags: meta.flags, seats: meta.seats,
+  }))
+
+  const aux = [
+    { id: 'flm-real', port: 8091, up: auxFlm.up, probedAtMs: auxFlm.probedAtMs },
+    { id: 'tts-server', port: 8092, up: auxTts.up, probedAtMs: auxTts.probedAtMs },
+    { id: 'py', port: 8093, up: auxPy.up, probedAtMs: auxPy.probedAtMs },
+    { id: 'pcreate', port: 8188, up: auxPcreate.up, probedAtMs: auxPcreate.probedAtMs },
+  ]
+
   return {
     reachable,
     profile,
@@ -86,7 +123,10 @@ async function readMbState() {
     sideModel,
     herald,
     pcreate,
-    switching: sw ? { id: sw.id, target: sw.target, phase: sw.phase, elapsedMs } : null,
+    seats,
+    leaves,
+    aux,
+    switching: sw ? { id: sw.id, target: sw.target, phase: sw.phase, startedAtMs: sw.startedAt, elapsedMs, budgetMs: sw.budgetMs } : null,
     lastResult,
   }
 }
@@ -101,6 +141,8 @@ async function runMbAction(id) {
     'mb.profile.swarm':   { cmd: 'cd ~ && ./profile.sh swarm',   ports: [8081], verifyType: 'completion' },
     'mb.profile.pair':    { cmd: 'cd ~ && ./profile.sh pair',    ports: [8081], verifyType: 'completion' },
     'mb.profile.dsv4f':   { cmd: 'cd ~ && ./profile.sh dsv4f',   ports: [8080], verifyType: 'completion' },
+    'mb.profile.q38':     { cmd: 'cd ~ && ./profile.sh q38',     ports: [8081], verifyType: 'completion' },
+    'mb.profile.q38h':    { cmd: 'cd ~ && ./profile.sh q38h',    ports: [8081], verifyType: 'completion' },
     'mb.herald.summon':   { cmd: 'cd ~ && ./profile.sh herald',  ports: [8080], verifyType: 'completion' },
     'mb.herald.dismiss':  { cmd: 'systemctl --user stop senior-herald', ports: [8080], verifyType: 'down' },
     'mb.pcreate.start':   { cmd: 'cd ~ && ./pcreate.sh start',   ports: [8188], verifyType: 'up' },
@@ -121,7 +163,7 @@ async function runMbAction(id) {
         ? id.slice('mb.pcreate.'.length)
         : id
 
-  switching = { id, target, phase: 'launch', startedAt: Date.now() }
+  switching = { id, target, phase: 'launch', startedAt: Date.now(), budgetMs: computeBudgetMs(id, entry) }
 
   const argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'fleet-host', entry.cmd]
 
@@ -134,6 +176,17 @@ async function runMbAction(id) {
   runVerify(id, entry, target).catch(() => {})
 
   return { id, target }
+}
+
+/** The up-budget actually in force for a given action -- mirrors the budgets
+ *  already hardcoded per-branch in runVerify (90s herald.summon, 180s other
+ *  completion/up flips, 60s down-verify), computed once at switch-start so
+ *  the device can draw progress against the real number instead of an
+ *  invented one. */
+function computeBudgetMs(id, entry) {
+  if (entry.verifyType === 'down') return 60000
+  if (entry.verifyType === 'completion') return id === 'mb.herald.summon' ? 90000 : 180000
+  return 180000 // 'up'
 }
 
 /** Log a verify-start line matching server.js logAction format. */
@@ -280,23 +333,66 @@ function sleep(ms) {
 // Probes
 // ---------------------------------------------------------------------------
 
+/** `up` is the HTTP-answered flag, kept separate from `id` -- a seat can
+ *  answer 200 with an empty roster, and that is still "up" (per
+ *  the fleet-state contract §2: not inferrable from occupant===null). */
 async function probeModels(port) {
   try {
     const res = await fetchWithTimeout(`http://${MB_HOST}:${port}/v1/models`, SOURCE_TIMEOUT_MS)
-    if (!res.ok) return null
+    const probedAtMs = Date.now()
+    if (!res.ok) return { up: false, id: null, error: `http ${res.status}`, probedAtMs }
     const body = await res.json()
     const data = Array.isArray(body?.data) ? body.data : []
-    return data[0]?.id ?? null
-  } catch (_) {
-    return null
+    return { up: true, id: data[0]?.id ?? null, error: null, probedAtMs }
+  } catch (err) {
+    return { up: false, id: null, error: String(err?.message ?? err), probedAtMs: Date.now() }
   }
 }
 
-async function probePcreate() {
+/** Aux-lane liveness -- ANY HTTP answer counts (same gate the pcreate probe
+ *  always used: ComfyUI has no /health and a 404 there previously read as
+ *  "never up", false-failing a real pcreate.start). Read-only lanes only. */
+async function probeAux(port) {
   try {
-    await fetchWithTimeout(`http://${MB_HOST}:8188/`, SOURCE_TIMEOUT_MS)
-    return true
+    await fetchWithTimeout(`http://${MB_HOST}:${port}/`, SOURCE_TIMEOUT_MS)
+    return { up: true, probedAtMs: Date.now() }
   } catch (_) {
-    return false
+    return { up: false, probedAtMs: Date.now() }
   }
+}
+
+/** Server-computed display name for a seat occupant, <=12 chars, uppercase.
+ *  Extends device/src/components/MbSlot.tsx's seniorShort() to both seats
+ *  and drops its herald-suppression special case -- that suppression is a
+ *  UI concern (device/src/components/fleet decides what to hide); the
+ *  server reports the truth. */
+function occupantShort(m) {
+  if (!m) return null
+  if (m.includes('gpt-oss-120b')) return '120B'
+  if (m.includes('DeepSeek-V4-Flash')) return 'DSV4F'
+  if (m.includes('Qwen3.5-122B')) return '122B'
+  if (m.includes('gemma-4-26B') || m.includes('gemma4-26b')) return 'GEMMA26B'
+  if (m.includes('Ornith')) return 'ORNITH9B'
+  // ⚠ Same ordering trap as the profile chain in readMbState above --
+  // heretic's path contains the stock substring, so it must be tested first.
+  if (m.includes('heretic')) return 'Q38H'
+  if (m.includes('qwen38-27b') || m.includes('Qwen3.8-27B')) return 'Q38'
+  if (m.includes('qwen36-35b') || m.includes('Qwen3.6-35B')) return 'Q35-35B'
+  const base = m.split('/').pop() ?? m
+  return base.replace(/\.gguf$/, '').slice(0, 12).toUpperCase()
+}
+
+// Leaf roster metadata -- tier/flags/seats are static per leaf; `active` is
+// derived once from the SAME fingerprint chain that sets `profile` (see
+// readMbState) so there is exactly one source of truth for "what's running".
+const LEAF_META = {
+  chat:  { tier: 'daily',          flags: [],              seats: ['worker', 'senior'] },
+  prod:  { tier: 'daily',          flags: [],              seats: ['worker'] },
+  // pair reseats BOTH seats: Ornith-9B @:8081 AND DSV4F @:8080 (profile.sh
+  // "P-PAIR: Ornith-9B fast lane @:8081 + DSV4F senior @:8080").
+  pair:  { tier: 'daily',          flags: [],              seats: ['worker', 'senior'] },
+  swarm: { tier: 'daily',          flags: [],              seats: ['worker'] },
+  dsv4f: { tier: 'daily',          flags: [],              seats: ['senior'] },
+  q38:   { tier: 'ready-for-duty', flags: [],              seats: ['worker'] },
+  q38h:  { tier: 'ready-for-duty', flags: ['uncensored'],  seats: ['worker'] },
 }

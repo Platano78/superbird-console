@@ -2,10 +2,13 @@
 // Backlight attention channel for the Car Thing.
 //
 // The device has no speaker, so the screen backlight is the only out-of-band
-// signal available for a headless host. This service watches the
-// claude-thing daemon over its WebSocket protocol (same one device/src/
-// daemon.ts uses from the browser) and drives /sys/class/backlight/aml-bl on
-// the device via adb shell round trips.
+// signal available for a headless host. This service has two inputs: it
+// watches the claude-thing daemon over its WebSocket protocol (same one
+// device/src/daemon.ts uses from the browser) for sessions/permissions, and
+// it polls services/deviceinfo/server.js (:8791/state) for a failed
+// fleet-host fleet action (Phase E — see FleetWatcher below). Both feed one
+// StateMachine and drive /sys/class/backlight/aml-bl on the device via adb
+// shell round trips.
 //
 // Node has a global WebSocket (stable since 22.4) — no npm dependency needed.
 //
@@ -59,6 +62,12 @@ const DAEMON_URL = 'ws://127.0.0.1:8790/ws'
 
 const BRIGHTNESS = { IDLE: 60, ACTIVE: 235, ATTENTION_MIN: 90, ATTENTION_MAX: 255 }
 const ATTENTION_CYCLE_MS = 1100
+// Fleet-failure pulse reuses the exact same range and machinery as the
+// permission-ATTENTION pulse below — only the cadence differs, so the two
+// are visually distinguishable (permission = urgent/fast, fleet = slower)
+// without a second pulse mechanism (Phase E requirement: reuse
+// killPulse()/respawn semantics as-is, exactly one thing drives brightness).
+const FLEET_FAILURE_CYCLE_MS = 2200
 const ATTENTION_STEPS = 8 // per half-cycle (up, then down) — smooth, not a square wave
 const PULSE_BOUND_S = 60 // device-side loop self-terminates after ~60s; respawned while still in ATTENTION
 
@@ -123,6 +132,7 @@ async function alsStart() {
 class Backlight {
   #lastSteady = null
   #pulseChild = null
+  #pulseKind = null // 'attention' | 'fleet' | null — which cadence is currently spawned, so a kind change respawns instead of no-op'ing
   #failing = false // true after the first failed write in a streak — logs once, not on every retry
   #backoffUntil = 0 // ms epoch; suppresses retries until this passes so a flapping USB link doesn't spam the journal
 
@@ -180,14 +190,23 @@ class Backlight {
    * its own — that's the "host died" safety net. Call again to respawn while
    * still in ATTENTION; killPulse() gives near-zero stop latency without a
    * persistent stdin pipe.
+   *
+   * `kind` selects the cadence only — same range, same script shape, same
+   * spawn/kill path either way, so this remains the one thing that drives
+   * brightness (Phase E: fleet-failure attention reuses this, it doesn't
+   * fork a second pulse mechanism). Calling with a different `kind` while
+   * already pulsing respawns at the new cadence instead of no-op'ing.
    */
-  startPulse() {
-    if (this.#pulseChild) return
+  startPulse(kind = 'attention') {
+    if (this.#pulseChild && this.#pulseKind === kind) return
+    if (this.#pulseChild) this.stopPulse()
+    this.#pulseKind = kind
     this.#lastSteady = null // steady tracking is meaningless while pulsing
-    const stepMs = Math.round(ATTENTION_CYCLE_MS / (2 * ATTENTION_STEPS))
+    const cycleMs = kind === 'fleet' ? FLEET_FAILURE_CYCLE_MS : ATTENTION_CYCLE_MS
+    const stepMs = Math.round(cycleMs / (2 * ATTENTION_STEPS))
     const stepUs = stepMs * 1000
     const range = BRIGHTNESS.ATTENTION_MAX - BRIGHTNESS.ATTENTION_MIN
-    const cycles = Math.ceil((PULSE_BOUND_S * 1000) / ATTENTION_CYCLE_MS)
+    const cycles = Math.ceil((PULSE_BOUND_S * 1000) / cycleMs)
     // BusyBox sh: nested for-loops ramp up then down, `usleep` paces each step.
     // Bounded to $cycles total cycles (~60s) so a dead host stops pulsing on
     // its own rather than pulsing forever.
@@ -232,6 +251,7 @@ class Backlight {
       this.#pulseChild.kill('SIGKILL')
       this.#pulseChild = null
     }
+    this.#pulseKind = null
   }
 }
 
@@ -297,6 +317,7 @@ class StateMachine {
     this.usage = null
     this.firedAlerts = {}
     this.lastClassified = null
+    this.fleetFailure = null // latched { id, ok:false, ms, error? } from :8791/state, or null — see FleetWatcher header comment for ack semantics
   }
 
   async init() {
@@ -318,7 +339,11 @@ class StateMachine {
   async #applyOnce() {
     let classified
     if (!this.connected) classified = 'DISCONNECTED'
+    // Ruling 13: a pending permission outranks a fleet failure for the
+    // backlight — checked first, so ATTENTION always wins the light even
+    // while a fleet failure is latched underneath it.
     else if (this.asks.length > 0) classified = 'ATTENTION'
+    else if (this.fleetFailure) classified = 'FLEET_FAILURE'
     else classified = this.sessions.some((s) => s.state === 'busy') ? 'ACTIVE' : 'IDLE'
 
     if (classified !== this.lastClassified) {
@@ -338,11 +363,41 @@ class StateMachine {
       return
     }
     if (classified === 'ATTENTION') {
-      this.backlight.startPulse()
+      this.backlight.startPulse('attention')
+      return
+    }
+    if (classified === 'FLEET_FAILURE') {
+      this.backlight.startPulse('fleet')
       return
     }
     this.backlight.stopPulse()
     await this.backlight.setSteady(classified === 'ACTIVE' ? BRIGHTNESS.ACTIVE : BRIGHTNESS.IDLE)
+  }
+
+  /**
+   * Feeds in the latest `mb.lastResult` from :8791/state (FleetWatcher below).
+   * Latches a failure until it is superseded — /state carries no
+   * acknowledgement signal today, so "acknowledged" is defined honestly as
+   * lastResult moving on: a NEWER id shows up (whatever its outcome) or the
+   * SAME id resolves to ok:true. Does not itself call apply() — callers do,
+   * same convention as sessions/asks/usage updates above.
+   */
+  updateFleetResult(lastResult) {
+    if (lastResult && lastResult.ok === false) {
+      if (!this.fleetFailure || this.fleetFailure.id !== lastResult.id) {
+        log('fleet failure latched:', lastResult.id, lastResult.error || '')
+        this.fleetFailure = lastResult
+      }
+      return
+    }
+    // lastResult is null (nothing run yet, or the deviceinfo service
+    // restarted and lost its in-memory lastResult), or ok:true, or a
+    // different id than the one latched — any of those means the failure we
+    // knew about has moved on, so clear the latch.
+    if (this.fleetFailure) {
+      log('fleet failure cleared (lastResult moved on)')
+      this.fleetFailure = null
+    }
   }
 
   checkUsageAlerts() {
@@ -495,6 +550,66 @@ class DaemonClient {
 }
 
 // ---------------------------------------------------------------------------
+// Fleet failure watch — Phase E's second input, alongside the claude-thing
+// WS above. Polls services/deviceinfo/server.js (:8791/state) for a failed
+// fleet-host action and drives the same pulse machinery (Ruling 13,
+// the internal fleet-view spec "Phase E — loud failure via the
+// backlight"). See StateMachine#updateFleetResult for the latch/ack logic.
+//
+// Unreachable :8791 is explicitly NOT a fleet failure — the deviceinfo
+// service is also polled by the device every 5s and drops routinely (adb
+// bounces), so treating "can't reach it" as "something failed" would cry
+// wolf on every USB blip. An unreachable poll leaves whatever latch state we
+// already have untouched — fail-open, same posture as every other adb
+// failure mode in this file — and only logs once per failure streak.
+// ---------------------------------------------------------------------------
+
+const FLEET_STATE_URL = 'http://127.0.0.1:8791/state'
+// Matches deviceinfo's own POLL_MS (device/src/deviceInfo.ts) — same house
+// cadence, polling politely rather than hammering the service.
+const FLEET_POLL_MS = 5000
+// Comfortably above the deviceinfo service's own 2000ms per-source probe
+// timeout (services/deviceinfo/mb.js SOURCE_TIMEOUT_MS) — device/src/
+// deviceInfo.ts:126-137 already learned this the hard way: a client timeout
+// set EQUAL to the server's per-source timeout loses the race every time
+// and makes degraded states unreachable. Matches that file's
+// FETCH_TIMEOUT_MS exactly.
+const FLEET_FETCH_TIMEOUT_MS = 4500
+
+class FleetWatcher {
+  #failing = false // logs once per failure streak, same pattern as Backlight's adb writes
+
+  constructor(sm) {
+    this.sm = sm
+  }
+
+  start() {
+    this.#tick()
+    setInterval(() => this.#tick(), FLEET_POLL_MS)
+  }
+
+  async #tick() {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), FLEET_FETCH_TIMEOUT_MS)
+    try {
+      const res = await fetch(FLEET_STATE_URL, { signal: ctrl.signal })
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const state = await res.json()
+      this.#failing = false
+      this.sm.updateFleetResult(state?.mb?.lastResult ?? null)
+      await this.sm.apply()
+    } catch (err) {
+      if (!this.#failing) {
+        this.#failing = true
+        log('fleet state poll failed (deviceinfo service down? not treated as a fleet failure):', err.message)
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Self-test — walks every visual state against the REAL device, no daemon.
 // ---------------------------------------------------------------------------
 
@@ -619,6 +734,11 @@ async function main() {
 
   await sm.init()
   client.connect()
+
+  // Second input (Phase E): the claude-thing WS above drives session/
+  // permission state; this polls :8791/state independently for a failed
+  // fleet action and feeds the same StateMachine/apply() path.
+  new FleetWatcher(sm).start()
 }
 
 main().catch((err) => {

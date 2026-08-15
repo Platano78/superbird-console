@@ -24,6 +24,7 @@ fork the firmware. Day-to-day operation → `docs/operations-runbook.md`.
 | **Running it: services, hooks, deploying a UI change, reading the device screen, physical buttons, backlight** | `docs/operations-runbook.md` | flashing, firmware-decision |
 | **Flashing, boot mode, drivers, USB not enumerating** | `docs/flashing-runbook.md` | firmware-decision, protocol |
 | **Message contract, daemon endpoints, session/usage shapes** | `docs/claude-protocol.md` | flashing, firmware-decision |
+| **`:8791` device-info state + actions (seats/leaves/aux, `mb.*`, DRYRUN)** | `docs/deviceinfo-protocol.md` | flashing, firmware-decision |
 | **What ports from/to WigiDash** | `docs/claude-protocol.md` §"Why this beats…", then `../WigiDash_Scripts/AGENTS.md` | flashing, firmware-decision |
 | **A bug or trap you're re-hitting** | `docs/solutions/` (by category, YAML frontmatter) | runbooks, firmware-decision |
 | **Session pickup / handoff** | `_pickup-handoff.md` | everything else |

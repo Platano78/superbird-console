@@ -10,10 +10,12 @@ export type KlogEntry = { code: string; key: string; repeat: boolean; t: number;
 
 const KLOG_MAX = 50
 const ARM_DELAY_MS = 250
-const BOUND_CODES = new Set(['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Enter'])
+const BOUND_CODES = new Set(['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Enter', 'ArrowUp', 'ArrowDown', 'KeyM'])
 /** Digit1..4 double as the four physical preset buttons when no ask is
  *  pending — Enter (the dial press) is deliberately excluded, it is not a
- *  preset button. */
+ *  preset button. ArrowUp/ArrowDown (dial rotation, once Phase A's bridge
+ *  lands) and KeyM (the M/front button) are fleet-nav-only and routed to
+ *  onNav/onPage below, same no-ask-only guard. */
 const SLOT_BY_CODE: Record<string, number> = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4 }
 
 function klog(e: KeyboardEvent, action: string) {
@@ -50,6 +52,14 @@ type Params = {
   /** Digit1..4 switch slots, but ONLY when no ask is pending (see the
    *  ask-always-wins guard below). Never called for the currently active slot. */
   onSlotChange: (slot: number) => void
+  /** ArrowUp/ArrowDown (dial rotation) — no-ask branch only, like everything
+   *  else here. Optional so a page that doesn't wire fleet nav still compiles. */
+  onNav?: (dir: 'up' | 'down') => void
+  /** KeyM (the M/front button) — no-ask branch only. Optional, see onNav. */
+  onPage?: () => void
+  /** Enter, no-ask branch only — replaces the old noop:dial-no-ask return.
+   *  With an ask pending, Enter stays Allow via resolveKeyAction, untouched. */
+  onConfirm?: () => void
 }
 
 /**
@@ -66,6 +76,9 @@ export function useHardwareKeys({
   onEscape,
   activeSlot,
   onSlotChange,
+  onNav,
+  onPage,
+  onConfirm,
 }: Params): FlashTarget | null {
   const askRef = useRef(ask)
   askRef.current = ask
@@ -79,6 +92,12 @@ export function useHardwareKeys({
   activeSlotRef.current = activeSlot
   const onSlotChangeRef = useRef(onSlotChange)
   onSlotChangeRef.current = onSlotChange
+  const onNavRef = useRef(onNav)
+  onNavRef.current = onNav
+  const onPageRef = useRef(onPage)
+  onPageRef.current = onPage
+  const onConfirmRef = useRef(onConfirm)
+  onConfirmRef.current = onConfirm
 
   // First-seen time and answered-state for the CURRENT ask id; both reset
   // only when the id changes (tracked via a ref, not an effect dependency).
@@ -107,17 +126,36 @@ export function useHardwareKeys({
         return klog(event, 'close-detail')
       }
 
-      if (!BOUND_CODES.has(event.code)) return klog(event, 'noop') // KeyM: deliberately unbound
+      if (!BOUND_CODES.has(event.code)) return klog(event, 'noop')
 
       const currentAsk = askRef.current
       if (!currentAsk) {
-        // Ask always wins (see above the currentAsk check is only reachable
-        // when there is none) — with nothing pending, Digit1..4 become the
-        // four preset buttons. Enter is the dial press, not a preset, so it
-        // stays a noop here. Neither the arm delay nor the answered-id guard
-        // below applies to this path — there is no misfire risk in changing
-        // a view, only in granting a tool call.
-        if (event.code === 'Enter') return klog(event, 'noop:dial-no-ask')
+        // Ask always wins — this whole branch is reachable ONLY when there is
+        // no pending ask, which is what makes every fleet-nav binding below
+        // safe. With nothing pending: Digit1..4 are the four preset buttons,
+        // Enter (dial press) confirms the fleet cursor, ArrowUp/ArrowDown
+        // (dial rotation, via Phase A's bridge) move it, and KeyM pages.
+        // With an ask pending, control never reaches here: Enter/Digit1 mean
+        // Allow and Digit4 means Deny, via resolveKeyAction below.
+        // Neither the arm delay nor the answered-id guard applies to this
+        // path — there is no misfire risk in changing a view, only in
+        // granting a tool call.
+        if (event.code === 'Enter') {
+          event.preventDefault()
+          onConfirmRef.current?.()
+          return klog(event, 'nav:confirm')
+        }
+        if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
+          event.preventDefault()
+          const dir = event.code === 'ArrowUp' ? 'up' : 'down'
+          onNavRef.current?.(dir)
+          return klog(event, `nav:${dir}`)
+        }
+        if (event.code === 'KeyM') {
+          event.preventDefault()
+          onPageRef.current?.()
+          return klog(event, 'nav:page')
+        }
         const slot = SLOT_BY_CODE[event.code]
         if (slot === activeSlotRef.current) return klog(event, 'noop:slot-unchanged')
         event.preventDefault()
