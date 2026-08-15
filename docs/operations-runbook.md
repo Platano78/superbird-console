@@ -168,16 +168,25 @@ pending — you should see the ramp, then a settle to 235 once answered.
 `window`. The mapping was confirmed 2026-08-02 from two independent layers that agreed exactly —
 the kernel capability bitmap plus a real press captured at both the evdev and DOM level:
 
-| Control | evdev | `event.code` | Bound to |
-|---|---|---|---|
-| Preset 1 | `KEY_1` (2) | `Digit1` | **Allow** · question option 1 |
-| Preset 2 | `KEY_2` (3) | `Digit2` | question option 2 |
-| Preset 3 | `KEY_3` (4) | `Digit3` | question option 3 |
-| Preset 4 | `KEY_4` (5) | `Digit4` | **Deny** · question option 4 |
-| Dial press | `KEY_ENTER` (28) | `Enter` | **Allow** (ask pending) · fleet-nav confirm (no ask) |
-| Back | `KEY_ESC` (1) | `Escape` | closes an open session detail — **not** inert |
-| M / front | `KEY_M` (50) | `KeyM` | fleet-nav page cycle (no ask) |
-| Dial rotate | `rotary@0` | n/a | **not bound** — see the rotation warning below |
+⚠ **Where the buttons physically are** — the top row has **FIVE** buttons, not four: presets
+1-4 then **M as the fifth**. **Back is the button BELOW THE DIAL**, not on the top row. This
+cost real confusion on 2026-08-15: the owner pressed Back fourteen times believing it was M,
+got fourteen silent `noop`s, and reported the dial as broken. "M / front" in the old table
+named the button without ever saying where it sits.
+
+| Control | Physical position | evdev | `event.code` | Bound to |
+|---|---|---|---|---|
+| Preset 1 | top row, 1st | `KEY_1` (2) | `Digit1` | **Allow** · question option 1 |
+| Preset 2 | top row, 2nd | `KEY_2` (3) | `Digit2` | question option 2 |
+| Preset 3 | top row, 3rd | `KEY_3` (4) | `Digit3` | question option 3 |
+| Preset 4 | top row, 4th | `KEY_4` (5) | `Digit4` | **Deny** · question option 4 |
+| **M** | **top row, 5th** | `KEY_M` (50) | `KeyM` | fleet-nav page cycle (no ask) |
+| **Back** | **below the dial** | `KEY_ESC` (1) | `Escape` | closes an open session detail — **not** inert |
+| Dial press | the dial itself | `KEY_ENTER` (28) | `Enter` | **Allow** (ask pending) · fleet-nav confirm (no ask) |
+| Dial rotate | the dial itself | `rotary@0` `REL_HWHEEL` | `ArrowUp`/`ArrowDown` **via the bridge** | fleet-nav cursor (no ask) |
+
+⚠ Rotation reaches the app ONLY while `scripts/rotary-bridge.mjs` is running — the encoder has
+no `kbd` handler, so nothing arrives without it. See the rotary gotcha in `docs/solutions/`.
 
 ⚠ **Back is bound, not inert.** `useHardwareKeys.ts` binds `Escape` to close an open session
 detail view (`onEscape`) whenever `hasOpenDetail` is true; with no detail open it's a logged noop.
