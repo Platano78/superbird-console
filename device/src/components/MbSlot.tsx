@@ -4,7 +4,7 @@ import type { DeviceInfoState } from '../deviceInfo'
 import { useConfirmArm } from './fleet/useConfirmArm'
 import { useFireLatch } from './fleet/useFireLatch'
 import { useFailureBanner } from './fleet/useFailureBanner'
-import { itemCountFor, primaryHost, resolveConfirmAction } from './fleet/shared'
+import { itemCountFor, primaryHost, resolveConfirmAction, truncateOccupant } from './fleet/shared'
 import { useFleetNav } from '../useFleetNav'
 import { SeatsPage } from './fleet/SeatsPage'
 import { LeavesPage } from './fleet/LeavesPage'
@@ -115,6 +115,7 @@ export function MbSlot({ info, reachable, navHandlersRef }: Props) {
   // yet. Distinct from a reachable document reporting host.reachable=false
   // (that's a real fleet outage, rendered per-tile below, never here).
   if (!doc || !host) {
+    const fallback = info.fleet_fallback
     return (
       <div className="flex h-full flex-col items-center justify-center">
         <GaugeArc value={null} tone="neutral" size={140} />
@@ -122,6 +123,34 @@ export function MbSlot({ info, reachable, navHandlersRef }: Props) {
         <div className="mt-1 text-xs uppercase tracking-widest text-stone-600">
           {info.fleet_state_error ?? 'fleet state unavailable'}
         </div>
+        {/* Seat-occupancy-only fallback (mb.readFleetFallback) -- read-only,
+            no tiles/actions, and deliberately styled to never resemble
+            SeatsPage's normal grid (dashed amber border + FALLBACK label) so
+            an operator can tell at a glance this is degraded local probing,
+            not the fleet-state/1 contract document. */}
+        {fallback && (
+          <div
+            className="mt-3 border-2 border-dashed border-amber-700 rounded px-3 py-2"
+            style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
+          >
+            {fallback.seats.map((seat) => (
+              <div key={seat.id} className="flex flex-col items-center">
+                <div className="text-[9px] uppercase tracking-widest text-amber-600">
+                  {seat.id.toUpperCase()} · {seat.port}
+                </div>
+                <div className={`text-sm font-semibold uppercase tracking-widest ${seat.up ? (seat.occupant ? 'text-amber-300' : 'text-stone-500') : 'text-stone-700'}`}>
+                  {/* up + occupant: name; up + no occupant: a live server
+                      that's genuinely empty; !up: we couldn't reach it at
+                      all -- three distinct states, three distinct strings. */}
+                  {seat.up ? (seat.occupant ? truncateOccupant(seat.occupant) : 'SEAT EMPTY') : 'UNREACHABLE'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {fallback && (
+          <div className="mt-1 text-[9px] uppercase tracking-widest text-amber-700">FALLBACK · SEATS ONLY</div>
+        )}
       </div>
     )
   }

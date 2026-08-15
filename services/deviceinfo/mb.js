@@ -56,6 +56,7 @@ async function fetchWithTimeout(url, ms, init) {
 module.exports = {
   readMbState,
   readFleetState,
+  readFleetFallback,
   runMbAction,
   __testCompletion: (port) => probeCompletion(port),
 }
@@ -123,6 +124,60 @@ async function readFleetState() {
     return { doc: body, error: null }
   } catch (err) {
     return { doc: null, error: String(err?.message ?? err) }
+  }
+}
+
+// Seats probed by readFleetFallback() -- occupancy only, ids/ports match
+// fleet-aggregator's own contract (worker :8081, senior :8080), never a leaf/profile name.
+const FALLBACK_SEATS = [
+  { id: 'worker', port: 8081 },
+  { id: 'senior', port: 8080 },
+]
+
+/**
+ * readFleetFallback(doc) -> Promise<{ probedAtMs, seats } | null>, NEVER
+ * throws/rejects. Called with the SAME `doc` readFleetState() just returned;
+ * a non-null `doc` means the aggregator is up, so this returns null and
+ * issues NO probe at all (zero added load on the happy path).
+ *
+ * When the aggregator is down, this is a narrow availability fallback --
+ * seat occupancy ONLY. It does not infer, derive, or guess a leaf/profile
+ * name from the occupant string; that substring-matching logic was
+ * deliberately deleted (see the removal note at the bottom of this file) and
+ * stays fleet-aggregator's job alone (fleet-aggregator/tools/fleet_probe.py). Each seat's occupant is
+ * whatever `/v1/models`'s `models[0].name` reports, verbatim.
+ */
+async function readFleetFallback(doc) {
+  if (doc) return null
+  const results = await Promise.allSettled(FALLBACK_SEATS.map((s) => probeSeatOccupant(s.port)))
+  return {
+    probedAtMs: Date.now(),
+    seats: FALLBACK_SEATS.map((s, i) => {
+      const r = results[i]
+      // reachable/occupant are independent: a live server with an empty
+      // `models` array is `up:true, occupant:null` (a genuinely empty seat),
+      // never collapsed into the same false as a seat we couldn't reach at
+      // all -- fleet-aggregator's own contract distinguishes empty/loading/unreachable.
+      const probe = r.status === 'fulfilled' ? r.value : { reachable: false, occupant: null }
+      return { id: s.id, port: s.port, up: probe.reachable, occupant: probe.occupant }
+    }),
+  }
+}
+
+/** Raw /v1/models probe for one seat -- `reachable` is true iff the fetch
+ *  returned 200 with parseable JSON (independent of whether a model is
+ *  loaded); `occupant` is `models[0].name` EXACTLY as the server reports it,
+ *  or null when the seat answered but is empty. Never parsed/mapped to a
+ *  leaf name. */
+async function probeSeatOccupant(port) {
+  try {
+    const res = await fetchWithTimeout(`http://${MB_HOST}:${port}/v1/models`, SOURCE_TIMEOUT_MS)
+    if (!res.ok) return { reachable: false, occupant: null }
+    const body = await res.json()
+    const name = body?.models?.[0]?.name
+    return { reachable: true, occupant: typeof name === 'string' && name ? name : null }
+  } catch (_) {
+    return { reachable: false, occupant: null }
   }
 }
 

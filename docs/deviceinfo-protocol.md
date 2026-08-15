@@ -50,6 +50,7 @@ behind it). Unchanged by this pass.
   mb:               { switching, lastResult },   // controller-owned state ONLY
   fleet_state:      { ... } | null,               // fleet-state/1, VERBATIM pass-through
   fleet_state_error: <string> | null,             // set iff fleet_state is null
+  fleet_fallback:   { probedAtMs, seats } | null, // seat-occupancy fallback, SIBLING of fleet_state
   ts:               <number>,   // epoch ms
 }
 ```
@@ -91,6 +92,70 @@ and `commands` on each host.
   duplicate leaf-inference logic the contract exists to forbid. A consumer that needs
   fleet state and sees `fleet_state: null` should render "fleet state unavailable", not
   synthesize a guess.
+
+### `fleet_fallback` — seat-occupancy-only availability fallback
+
+✅ Observed live (aggregator forced `doc: null`, real fleet-host probed):
+
+```json
+{
+  "probedAtMs": 1786822383646,
+  "seats": [
+    { "id": "worker", "port": 8081, "up": true, "occupant": "/models/gemma4-26b-a4b-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf" },
+    { "id": "senior", "port": 8080, "up": true, "occupant": "/models/gpt-oss-120b/Q4_K_M/gpt-oss-120b-Q4_K_M-00001-of-00002.gguf" }
+  ]
+}
+```
+
+The aggregator (`http://localhost:8095/fleet-state.json`) is the ONE producer of
+`fleet-state/1` (`fleet-aggregator/docs/fleet-state-contract.md`), and `readFleetState()` correctly
+refuses to re-derive anything when it's unreachable — that's contract-correct, but it
+also leaves the device fully blind whenever the desktop aggregator process is down, for
+an always-on glanceable device. `fleet_fallback` is a narrow, explicitly degraded
+availability fallback for exactly that gap:
+
+- **A SIBLING of `fleet_state`, never merged into it.** `fleet_fallback` is `null`
+  whenever `fleet_state` is non-null (the happy path) — `mb.readFleetFallback(doc)`
+  takes the SAME `doc` `readFleetState()` just returned and returns `null` on its very
+  first line if `doc` is truthy, before issuing any probe. A consumer can never
+  mistake this degraded local read for the contract document, because the two keys are
+  structurally distinct and mutually exclusive: exactly one of them is non-null at a
+  time.
+- **Seat occupancy ONLY — no leaf/profile inference.** This probes the two known
+  fleet-host seats (`worker` :8081, `senior` :8080 — the same `MB_HOST` this service
+  already talks to for `mb.*` actions) directly via `GET /v1/models`, and reports
+  `models[0].name` **verbatim**. It does not infer, derive, or guess a leaf/profile
+  name (`chat`/`prod`/`q38h`/`dsv4f`/etc.) from that string via substring matching —
+  that logic was deliberately deleted from this file (see the removal note at the
+  bottom of `mb.js`) and stays fleet-aggregator's job alone, forever
+  (`fleet-aggregator/tools/fleet_probe.py` — "one producer, many consumers").
+- **`reachable` and `occupant` are independent, not collapsed.** A seat that answers
+  200 with an empty `models` array is `up:true, occupant:null` — genuinely empty, not
+  down. A seat that times out, refuses the connection, answers non-200, or returns
+  unparseable JSON is `up:false, occupant:null` — unreachable, distinct from empty.
+  This matters because fleet-state/1 itself treats these as different states (empty ≠
+  loading ≠ unreachable); collapsing "no model loaded" into the same signal as "can't
+  reach the box at all" would make this fallback confidently wrong about a live server.
+- **Never throws.** `Promise.allSettled` fan-out, per-seat try/catch inside
+  `probeSeatOccupant()` — a probe failure yields `{reachable:false, occupant:null}`,
+  never a rejection into `buildState()`.
+
+Shape:
+
+```jsonc
+{
+  "probedAtMs": <number>,       // epoch ms this fan-out ran
+  "seats": [
+    { "id": "worker", "port": 8081, "up": <bool>, "occupant": <string> | null },
+    { "id": "senior", "port": 8080, "up": <bool>, "occupant": <string> | null }
+  ]
+}
+```
+
+`up:false` means the seat's `/v1/models` was unreachable, non-200, timed out, or
+returned unparseable JSON. `up:true, occupant:null` means the seat answered but no
+model is currently loaded. `up:true, occupant:"<path>"` is the raw model path string,
+never parsed or mapped to anything.
 
 ### `mb` block — controller-owned state only
 
