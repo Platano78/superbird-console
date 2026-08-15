@@ -42,56 +42,144 @@ export type MbSwitching = {
 } | null
 export type MbLastResult = { id: string; ok: boolean; ms: number; error?: string } | null
 
-// Seats -- the persistent objects (route by SEAT, never by model name). Two
-// of them, always present even when down: an absent seat and an empty seat
-// must be distinguishable from a dropped field. See
-// the fleet-state contract §2.
-export type SeatId = 'worker' | 'senior'
-export type SeatState = {
-  seat: SeatId
-  port: 8081 | 8080
-  up: boolean
-  occupant: string | null
-  /** Server-computed, <=12 chars, already uppercase -- this is what a tile
-   *  renders; `occupant` (the full model id) is detail-page-only. */
-  occupantShort: string | null
-  /** Per-seat staleness anchor -- subtract from DeviceInfoState.serverNowMs,
-   *  never Date.now() (the device clock is not synced). */
-  probedAtMs: number | null
-  error: string | null
+// `fleet-state/1` -- THE SCHEMA OF RECORD, owned by fleet-aggregator:
+// fleet-aggregator/docs/fleet-state-contract.md. car-thing is a CONSUMER only; nothing
+// here re-derives fleet state by probing /v1/models (contract "one producer,
+// many consumers"). Types below mirror the contract's document shape.
+//
+// 🔴 Law 7 (additive evolution): consumers must ignore unknown keys and must
+// not crash on an enum value they don't recognise. `state` fields below are
+// typed as the known literals for editor help, but every switch on them in
+// this codebase carries a `default` arm that degrades gracefully (renders
+// "--" / unknown-safe), never a `never`-exhaustiveness assert.
+
+export type FleetSeatState = 'serving' | 'loading' | 'empty' | 'unreachable' | 'unknown'
+
+export type FleetOccupant = {
+  /** The truth -- never parsed. */
+  id: string
+  /** Best-effort prettification, may be wrong, missing, or (today) a raw
+   *  33+ char GGUF basename that doesn't fit a ~12-char tile. Never parsed --
+   *  see the fleet-state contract §2.1: we asked fleet-aggregator for a
+   *  short_display field; until it lands the device truncates this. */
+  short?: string
+  capabilities?: string[]
 }
 
-// Leaves -- the transitions between seat occupancies, i.e. the verbs. Roster
-// is server-enumerated, never hardcoded on device (the fleet-state contract §2).
-export type LeafId = 'chat' | 'prod' | 'pair' | 'swarm' | 'leaf-deep' | 'leaf-mid' | 'leaf-alt'
-export type LeafTier = 'daily' | 'ready-for-duty'
-export type LeafState = {
-  /** Wire id -- display names are theme (leaf-deep renders LEAF-DEEP), ids stay contract. */
-  id: LeafId
-  active: boolean
-  tier: LeafTier
-  /** Carries 'uncensored' for leaf-alt -- drives the distinct tone (Ruling 7). */
-  flags: string[]
-  seats: SeatId[]
+export type FleetSeat = {
+  id: string
+  label: string
+  port: number
+  state: FleetSeatState
+  /** /v1/models answered -- NOT readiness (law 4). Never render this as "ready". */
+  http_ok: boolean
+  /** true only once a real completion came back; null = not gate-tested --
+   *  a null tile must make NO readiness claim at all. */
+  ready: boolean | null
+  ready_gate?: 'generation' | 'http' | 'none'
+  occupant: FleetOccupant | null
+  /** true only when a 122B-class herald holds this seat (senior only). */
+  herald?: boolean
+  checked_at_epoch?: number
+  /** Per-probe staleness -- trust this over the document's own generated_at
+   *  (law 5). Grey the individual tile, never the page. */
+  age_s: number
 }
 
-// Aux lanes -- read-only liveness this pass (Ruling 8); no start/stop verbs.
-export type AuxState = { id: string; port: number; up: boolean; probedAtMs: number | null }
+export type FleetAux = {
+  id: string
+  label: string
+  port: number
+  kind: string
+  state: FleetSeatState
+  occupant?: FleetOccupant | null
+  unit?: string
+  unit_active?: string
+  checked_at_epoch?: number
+  age_s?: number
+}
 
-export type MbState = {
+export type FleetLeaf = {
+  /** May be "unknown" -- must render, not crash (law 2). */
+  name: string
+  inferred_from?: string
+  known_leaves?: string[]
+  transition: { target: string; started_epoch?: number; phase?: string } | null
+}
+
+export type FleetThermalStatus = 'ok' | 'warm' | 'hot' | 'critical'
+export type FleetThermals = {
+  available: boolean
+  checked_at_epoch?: number
+  age_s?: number
+  cpu_tctl_c: number | null
+  gpu_edge_c: number | null
+  gpu_ppt_w: number | null
+  gpu_sclk_mhz?: number | null
+  gpu_busy_pct: number | null
+  nvme_c: number | null
+  load1: number | null
+  /** null BY DESIGN on fleet-host -- no tachometer exists. Never render as
+   *  a dead gauge or "N/A"; switch on `fan_control` instead. */
+  fan_rpm: number | null
+  /** null BY DESIGN on fleet-host -- no OS-controllable PWM. */
+  pwm_pct: number | null
+  fan_control: 'bios' | 'os' | 'unknown'
+  status: FleetThermalStatus
+} | null
+
+export type FleetCommands = {
+  /** Never a hardcoded roster -- LEAVES renders from this list. Empty on
+   *  lifeline/bench hosts -> monitoring-only, no flip control offered. */
+  flip: string[]
+  summon: string[]
+  dismiss: boolean
+  confirm_required?: boolean
+  est_seconds?: Record<string, number>
+}
+
+export type FleetHost = {
+  id: string
+  label: string
+  addr?: string
+  role?: 'primary' | 'lifeline' | 'bench' | string
   reachable: boolean
-  profile: 'chat' | 'prod' | 'swarm' | 'pair' | 'leaf-deep' | null
-  workerModel: string | null
-  seniorModel: string | null
-  sideModel: string | null
-  herald: boolean
-  pcreate: boolean
+  checked_at_epoch?: number
+  age_s?: number
+  error?: string | null
+  leaf?: FleetLeaf
+  seats: FleetSeat[]
+  aux: FleetAux[]
+  thermals: FleetThermals
+  commands: FleetCommands
+}
+
+export type FleetWarning = { host: string; level: string; code: string; text: string }
+
+export type FleetStateDoc = {
+  schema: string
+  generated_at?: string
+  generated_at_epoch?: number
+  poll_interval_s?: number
+  producer?: string
+  hosts: FleetHost[]
+  warnings?: FleetWarning[]
+}
+
+// mb -- controller-owned state ONLY (the fleet-state contract §4).
+// Everything that used to live here (reachable/profile/workerModel/
+// seniorModel/sideModel/herald/seats/leaves/aux/the old server-clock
+// staleness anchor) is now the contract's job -- see FleetStateDoc above,
+// with ONE deliberate exception: `pcreate`. fleet-state/1 does not model
+// pcreate at all -- it holds no seat and is not a leaf (contract §3 /
+// the fleet-state contract §3) -- so probing it here duplicates no
+// producer-side truth and re-derives no leaf-inference logic; it's simply a
+// service the schema doesn't cover. See services/deviceinfo/mb.js.
+export type MbPcreate = { up: boolean; port: number; probedAtMs: number }
+export type MbState = {
   switching: MbSwitching
   lastResult: MbLastResult
-  seats: SeatState[]
-  leaves: LeafState[]
-  aux: AuxState[]
-  error?: string
+  pcreate: MbPcreate
 }
 export type DeviceInfoState = {
   fleet: { router: RouterInfo; coder: CoderInfo }
@@ -99,11 +187,12 @@ export type DeviceInfoState = {
   system: { disk: DiskInfo }
   device: DeviceBlock
   mb: MbState
+  /** fleet-state/1, re-exported VERBATIM by services/deviceinfo/mb.js under
+   *  this key. null (with `fleet_state_error` set) when the aggregator is
+   *  unreachable -- distinct from a reachable-but-empty document. */
+  fleet_state: FleetStateDoc | null
+  fleet_state_error?: string | null
   ts: number
-  /** Explicit "server now", required at the top level -- the device anchors
-   *  every staleness/age computation on this, never Date.now() (the device
-   *  clock is not synced). See the fleet-state contract §4. */
-  serverNowMs: number
 }
 
 const DEVICEINFO_URL = 'http://127.0.0.1:8791/state'

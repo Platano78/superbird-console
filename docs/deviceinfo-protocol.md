@@ -7,11 +7,13 @@ Contract for `services/deviceinfo/server.js` (+ `services/deviceinfo/mb.js`) —
 carried fleet/mb state. `mb.*` and everything below lives here because it never lived
 there (Ruling 1, the internal fleet-view spec).
 
-> **Verification status (2026-08-15).** Rows marked ✅ were observed against the live
-> service on this box (`systemctl --user status car-thing-deviceinfo.service`) and, where
-> noted, against the live fleet-host box (192.0.2.10) during this session. Rows marked
-> ⚠ are read from source but not independently exercised this pass. Nothing below is
-> marked verified that was not actually observed.
+> **Status (2026-08-15, rework pass).** fleet-aggregator published `fleet-state/1`
+> (`fleet-aggregator/docs/fleet-state-contract.md`) as the schema of record for fleet state, AFTER
+> this service had already shipped its own (worse, duplicated) shape. This service no
+> longer re-derives fleet state by polling `/v1/models` itself — it fetches fleet-aggregator's
+> aggregator and re-exports the document verbatim. See the fleet-state contract
+> for the full delta history against the contract. Rows below marked ✅ were re-verified
+> against a live instance of this service (non-default port, scratch process) this pass.
 
 ## Transport
 
@@ -22,10 +24,8 @@ it over `adb reverse tcp:8791 tcp:8791`.
 ✅ **CORS is required, not optional.** The kiosk page loads from `file://`, an opaque
 origin — every fetch is cross-origin and Chromium blocks the response without
 `access-control-allow-origin: *` (plus `-methods`/`-headers` for the POST preflight).
-Verified: without the header both slots render "DEVICEINFO SERVICE UNREACHABLE" while a
-device-side `wget` to the same URL succeeds. `*` is acceptable — this service is
-loopback-bound, read-only apart from the enumerated `/action` allowlist, and exposes no
-secrets.
+`*` is acceptable — this service is loopback-bound, read-only apart from the enumerated
+`/action` allowlist, and exposes no secrets.
 
 ## `GET /health`
 
@@ -33,160 +33,180 @@ secrets.
 
 ## `GET /config`
 
-⚠ Returns `{ buttons: [...] }` — the CONTROL grid's declarative allowlist
-(`buttons.json`), stripped of `argv`/`stopArgv` (the device sends an opaque `id` and never
-sees the command behind it). Frozen this pass (Ruling: `buttons.json` untouched).
+Returns `{ buttons: [...] }` — the CONTROL grid's declarative allowlist (`buttons.json`),
+stripped of `argv`/`stopArgv` (the device sends an opaque `id` and never sees the command
+behind it). Unchanged by this pass.
 
 ## `GET /state`
 
-✅ Every block observed live 2026-08-15 (box resting on `chat` at read time; see the `mb`
-example below).
+✅ Every block re-observed live this pass.
 
 ```
 {
-  fleet:  { router, coder },
-  queue:  { pending, inProgress, done, review, escalated, failed, obligations },
-  system: { disk },
-  device: { tempC, uptime, memory, disk, backlight } | { error },
-  mb:     { ...see below },
-  ts:            <number>,   // epoch ms — kept for existing consumers
-  serverNowMs:   <number>,   // same value, explicit "anchor age math on this" name
+  fleet:            { router, coder },
+  queue:            { pending, inProgress, done, review, escalated, failed, obligations },
+  system:           { disk },
+  device:           { tempC, uptime, memory, disk, backlight } | { error },
+  mb:               { switching, lastResult },   // controller-owned state ONLY
+  fleet_state:      { ... } | null,               // fleet-state/1, VERBATIM pass-through
+  fleet_state_error: <string> | null,             // set iff fleet_state is null
+  ts:               <number>,   // epoch ms
 }
 ```
 
-⚠ `fleet`/`queue`/`system`/`device` are unchanged by this work — documented here only so
+`fleet`/`queue`/`system`/`device` are unchanged by this work — documented here only so
 the top-level shape is complete; see the internal mb-slot spec / source comments in `server.js`
 for their own history. Every source is independently probed with a hard 2000 ms timeout
 (`SOURCE_TIMEOUT_MS`) inside a `Promise.all`/`Promise.allSettled` fan-out — one slow or
 dead source degrades to an honest `null`/`error`, never a stall on the others.
 
-🔴 **The device has no synced clock.** `serverNowMs` is the field the device is meant to
-subtract `probedAtMs`/`startedAtMs` against; never `Date.now()` on-device
-(the fleet-state contract §1, §4).
+🔴 **`serverNowMs` is GONE.** The contract carries per-probe `age_s` on every observation,
+which is strictly better than a second server clock — two clocks is how consumers start
+disagreeing. `ts` remains for existing non-`mb` consumers.
 
-### `mb` block
+### `fleet_state` — pass-through of `fleet-state/1`
 
-✅ Observed shape (device on `chat` at capture time):
+**This service does not own this schema and does not restate it here.** `fleet_state` is
+`GET http://localhost:8095/fleet-state.json` (The fleet aggregator) fetched and
+re-exported **byte-for-byte** under this key — unknown fields untouched, nothing
+whitelisted or reshaped, per the contract's law 7 (additive evolution, consumers ignore
+unknown keys). For the schema itself — `hosts[]`, `seats[]`, `leaf`, `thermals`,
+`commands`, `warnings`, and the seven design laws that make the shape non-obvious — read
+`fleet-aggregator/docs/fleet-state-contract.md`. Do not copy fields from it into this file; that file
+is the schema of record and its own change protocol explicitly forbids a second copy.
+
+✅ Observed live: `fleet_state.schema === "fleet-state/1"`, `hosts[]` present with `seats`
+and `commands` on each host.
+
+- `mb.readFleetState()` (`services/deviceinfo/mb.js`) does the fetch, with an
+  `AbortController` timeout of 4000 ms — deliberately well above this service's own
+  2000 ms `SOURCE_TIMEOUT_MS`, because a client timeout equal to (or below) the timeout it
+  is racing against loses every time. This is the same trap already documented in
+  `device/src/deviceInfo.ts:75-86` against THIS service's own timeout; it applies again
+  one hop further out.
+- **Failure is never fabricated.** If the aggregator is unreachable, answers non-200, or
+  returns something that isn't a JSON object, `fleet_state: null` and `fleet_state_error`
+  names the reason (`"http 503"`, `"invalid JSON: ..."`, a network error message, etc.).
+  There is **no fallback to probing fleet-host directly** — that would resurrect the
+  duplicate leaf-inference logic the contract exists to forbid. A consumer that needs
+  fleet state and sees `fleet_state: null` should render "fleet state unavailable", not
+  synthesize a guess.
+
+### `mb` block — controller-owned state only
+
+✅ Observed shape:
 
 ```jsonc
 {
-  "reachable": true,          // workerModel !== null || seniorModel !== null (unchanged meaning)
-  "profile": "chat",          // derived from the SAME fingerprint chain that marks `leaves[].active`
-  "workerModel": "/models/.../gguf" | null,
-  "seniorModel": "/models/.../gguf" | null,
-  "sideModel":   "/models/.../gguf" | null,   // :8082, swarm-only
-  "herald": false,            // seniorModel includes 'Qwen3.5-122B'
-  "pcreate": false,           // :8188 answered (same gate as aux.pcreate.up)
-  "seats": [ /* below */ ],
-  "leaves": [ /* below */ ],
-  "aux": [ /* below */ ],
-  "switching": null,          // or { id, target, phase, startedAtMs, elapsedMs, budgetMs }
-  "lastResult": null          // or { id, ok, ms, error? } — survives switching clearing
+  "switching": null,   // or { id, target, phase, startedAtMs, elapsedMs, budgetMs }
+  "lastResult": null   // or { id, ok, ms, error? } -- survives switching clearing
 }
 ```
 
-**`seats`** — the persistent objects (ratified doctrine: "route by SEAT, never by model
-name"). ✅ Always exactly two entries, worker then senior, present even when down:
+Per the fleet-state contract §4, `fleet-state/1` is an **observation**
+document; `switching` and `lastResult` are this service's own **controller** state and
+are not proposed for the schema. Everything previously invented here — `reachable`,
+`profile`, `workerModel`, `seniorModel`, `sideModel`, `herald`, `pcreate`, `seats`,
+`leaves`, `aux` — has been **deleted**; that information now lives in `fleet_state`.
 
 | Field | Notes |
 |---|---|
-| `seat` | `"worker"` (:8081) or `"senior"` (:8080) |
-| `port` | `8081` / `8080` |
-| `up` | the probe got an HTTP answer — **not** derivable from `occupant === null` (a seat can answer 200 with an empty roster) |
-| `occupant` | full model id from `/v1/models` `data[0].id`, or `null` |
-| `occupantShort` | server-computed, ≤12 chars, uppercase — the tile-renderable form |
-| `probedAtMs` | epoch ms this seat's own probe resolved — not the top-level `ts` |
-| `error` | honest per-source failure string, or `null` |
-
-**`leaves`** — the flip targets (transitions between seat occupancies, not objects
-themselves). ✅ Always all seven, roster is server-enumerated:
-
-| Field | Notes |
-|---|---|
-| `id` | `chat`\|`prod`\|`pair`\|`swarm`\|`leaf-deep`\|`leaf-mid`\|`leaf-alt` — wire id; display name is a UI concern (`leaf-deep` renders LEAF-DEEP) |
-| `active` | derived from the one fingerprint chain that also sets `profile` — never a second source of truth |
-| `tier` | `"daily"` (chat/prod/pair/swarm/leaf-deep) or `"ready-for-duty"` (leaf-mid/leaf-alt — owner ruling 2026-08-15, must not present as peers of the dailies) |
-| `flags` | `["uncensored"]` for `leaf-alt`, `[]` otherwise |
-| `seats` | which seats this leaf reseats: `["worker"]` (prod/swarm/leaf-mid/leaf-alt), `["senior"]` (leaf-deep), `["worker","senior"]` (chat, **and pair** — `profile.sh`: *"P-PAIR: Ornith-9B fast lane @:8081 + LEAF-DEEP senior @:8080"*) |
-
-🔴 **Fingerprint ordering trap.** `leaf-alt`'s model path
-(`/models/qwen38-27b-heretic/Qwen3.8-27B-heretic-ara.i1-Q6_K.gguf`) contains BOTH of
-`leaf-mid`'s substrings (`qwen38-27b` and `Qwen3.8-27B`). `mb.js` tests `heretic` before either
-leaf-mid substring; reordering silently reports the uncensored leaf as stock. ✅ Proved this
-session: the heretic model-id string classifies as `leaf-alt`, the stock string as `leaf-mid`
-(node one-liner against the real matching chain, both correct).
-
-**`aux`** — read-only liveness lanes, no verbs (Ruling 8: their control surfaces have not
-been read; shipping start/stop against a process known only by name would be guessing).
-
-| id | port | gate |
-|---|---|---|
-| `flm-real` | 8091 | ANY HTTP answer at `/` |
-| `tts-server` | 8092 | ANY HTTP answer at `/` |
-| `py` | 8093 | ANY HTTP answer at `/` |
-| `pcreate` | 8188 | ANY HTTP answer at `/` (ComfyUI has no `/health`; a 404 there previously read as "never up" and false-failed a real `pcreate.start`) |
-
-✅ Each entry: `{ id, port, up, probedAtMs }`. Same 2000 ms `SOURCE_TIMEOUT_MS`, same
-`Promise.allSettled` fan-out as the seats — no serialized extra round trip.
-
-### `switching`
-
-✅ Non-null exactly while an `mb.*` action's verify loop is running; server-owned state
-machine, the device only renders it.
-
-| Field | Notes |
-|---|---|
-| `id` | the action id in flight, e.g. `mb.profile.leaf-alt` |
-| `target` | leaf/verb being moved to |
-| `phase` | `"launch"` → `"health"` → `"completion"` (profile/herald.summon flips) or `"launch"` → `"down"` (dismiss/stop/pcreate.stop); rendered verbatim |
-| `startedAtMs` | server epoch when the switch began |
-| `elapsedMs` | server-computed `Date.now() - startedAtMs` — the device never does clock math |
-| `budgetMs` | the up-budget actually in force: `90000` for `mb.herald.summon`, `60000` for a `'down'`-verify action, `180000` otherwise |
+| `switching.id` | the action id in flight, e.g. `mb.profile.leaf-alt` |
+| `switching.target` | leaf/verb being moved to |
+| `switching.phase` | `"launch"` → `"health"` → `"completion"` (profile/herald.summon flips) or `"launch"` → `"down"` (dismiss/stop/pcreate.stop); rendered verbatim |
+| `switching.startedAtMs` / `elapsedMs` / `budgetMs` | server-computed; device never does clock math |
+| `lastResult` | terminal outcome of the most recent action this service fired |
 
 🔴 **Mid-flip, both fleet-host ports go down by design** (`profile.sh stop_all` tears
-down before relaunching). The device must check `switching` BEFORE consulting
-`reachable`/`up` — this was observed on hardware rendering "unreachable" during a
-deliberate flip (the internal mb-slot spec amend log, 2026-08-13).
+down before relaunching). A consumer should check `switching` (and, once wired,
+`fleet_state`'s `leaf.transition`) BEFORE reading `fleet_state`'s seat states as "down" —
+this was observed on hardware once already (the internal mb-slot spec amend log, 2026-08-13),
+before the contract existed to carry `leaf.transition` for exactly this case.
 
 🔴 **"Ready" is gated on a real completion (`timings.predicted_n > 0`), never on
 `/health` or on `content` matching.** `/health` answers 200 long before generation works.
-Both `leaf-mid`/`leaf-alt` default to `reasoning_effort: xhigh` and can legitimately return zero
-`content` while having generated thousands of tokens — do not "improve" this gate into a
-content check.
+This is now also the contract's own law 4 (`ready` is generation-gated).
 
 ## `POST /action`
 
-Body: `{ "id": "<action id>" }`, ≤4096 bytes. Response is **fire-and-forget**: `202`
-returns immediately with the resolved command/target; the device observes the actual
-result later by polling `/state` (`fleet.router.loaded` for CONTROL-grid buttons,
-`mb.switching`/`mb.lastResult` for `mb.*`). There is no synchronous "did it work" response
-— this is the 202-then-observe pattern the whole service is built on.
+Body: `{ "id": "<action id>", "confirm_token"?: "<token>", "dry_run"?: true }`,
+≤4096 bytes. Response is **fire-and-forget** for an executed action: `202` returns
+immediately; the device observes the actual result later by polling `/state`
+(`fleet.router.loaded` for CONTROL-grid buttons, `mb.switching`/`mb.lastResult` for
+`mb.*`). There is no synchronous "did it work" response for an executed action — this is
+the 202-then-observe pattern the whole service is built on.
 
 Two families, routed by whether `id` starts with `mb.`:
 
-- **`mb.*`** → `mb.runMbAction(id)` (this doc's action allowlist below). Rejects with
-  `400 {error}` for an unknown id or a switch already in progress
-  (`switch in progress: <id>`).
+- **`mb.*`** → `mb.runMbAction(id, { confirm_token, dry_run })` (allowlist below).
+  Rejects with `400 {error}` for an unknown id, a switch already in progress
+  (`switch in progress: <id>`), or a rejected `confirm_token`.
 - **everything else** → `resolveAction(id)` against `buttons.json`'s declarative allowlist
-  (CONTROL grid). Frozen this pass — not detailed further here; see `buttons.json`'s own
-  `_comment` block.
+  (CONTROL grid). Unchanged this pass — see `buttons.json`'s own `_comment` block.
 
-✅ **`CARTHING_ACTION_DRYRUN=1`** (env var on the **service process**, not the client) —
-logs `DRYRUN (...)`, returns `202 {..., dryRun:true}`, and does **not** spawn `ssh` or the
-verify loop. Proved this session against an isolated instance of the service (own port,
-own env) with a real `mb.profile.leaf-alt` id: response was `{"id":"mb.profile.leaf-alt","dryRun":true}`,
-no ssh process observed.
+### Two-step confirm + payload dry-run (mb.\* only)
 
-🔴 **Gotcha, hit live this session:** setting the env var on the *curl* invocation does
-nothing — curl doesn't consult it, and it never reaches the already-running systemd
-service's environment. `CARTHING_ACTION_DRYRUN=1 curl ...` against a service that is
-already running WITHOUT that var set in its own environment fires a REAL action. The var
-must be in the service process's environment (`systemctl --user edit`, or restart the
-unit with it exported first) — never assume a client-side env prefix reaches the server.
+🔴 **Design change, prompted by a real incident.** A single `POST /action {id}` used to
+fire a live leaf flip on a serving box immediately. During this session's own gate
+testing, someone set `CARTHING_ACTION_DRYRUN=1` on the **`curl` invocation** instead of
+the **service process's** environment — curl doesn't consult it, and it never reached the
+already-running systemd service, so a REAL flip ran against fleet-host. See the trap
+call-out below; this is why the flow changed.
+
+The action flow is now two calls:
+
+1. **`POST /action {"id": "mb.profile.leaf-alt"}`** (no `confirm_token`) → does **not**
+   execute anything. Returns:
+   ```json
+   {
+     "id": "mb.profile.leaf-alt",
+     "target": "leaf-alt",
+     "confirm_token": "<32-hex-char single-use token>",
+     "expires_in_s": 30,
+     "would": { "id": "...", "target": "leaf-alt", "cmd": "cd ~ && ./profile.sh leaf-alt", "ports": [8081], "verifyType": "completion" }
+   }
+   ```
+   The token is bound to this exact `id`, expires in ~30 s, and is single-use.
+2. **`POST /action {"id": "mb.profile.leaf-alt", "confirm_token": "<token from step 1>"}`**
+   → executes iff the token matches the pending one, is unexpired, unused, and bound to
+   this same `id`. A token that is wrong, expired, already used, or issued for a
+   different action id is rejected with `400 {"error": "confirm_token rejected: <reason>"}`
+   (`no pending confirmation` / `confirm_token already used` / `confirm_token expired` /
+   `confirm_token bound to a different action id` / `confirm_token mismatch`) — **nothing
+   is spawned** on rejection.
+
+`dry_run: true` **in the request payload** is the honest per-request dry-run mechanism —
+independent of `confirm_token` entirely. `POST /action {"id": "...", "dry_run": true}`
+echoes the exact `would` command and executes nothing, regardless of whether a
+`confirm_token` is also present.
+
+✅ **`CARTHING_ACTION_DRYRUN=1`** (env var on the **service process**, not the client) is
+kept as a coarser global kill-switch, checked first in `server.js` before `mb.*` reaches
+`mb.runMbAction` at all — logs `DRYRUN (mb, env kill-switch, not spawned)`, returns
+`202 {..., dry_run:true}`.
+
+🔴 **Documented trap: an env var on the CLIENT is meaningless.**
+`CARTHING_ACTION_DRYRUN=1 curl ...` against a service that is already running WITHOUT
+that var set in its own environment fires a REAL action — curl does not read or forward
+the shell variable to the server process. The var must be set in the service process's
+own environment (`systemctl --user edit ...` or restarting the unit with it exported
+first). This is the incident that motivated the `confirm_token` flow above: an env-var
+mistake on the client side can no longer, by itself, cause a real flip — the payload
+`dry_run` flag and the two-step confirm are per-request and cannot be silently bypassed
+by a misconfigured shell.
+
+✅ Verified this pass (isolated instance, non-default port, no real device/box touched):
+- `{"id":"mb.profile.leaf-alt"}` → returned a `confirm_token`, `would`, spawned nothing.
+- `{"id":"mb.profile.leaf-alt","confirm_token":"<wrong>"}` → `400`, `confirm_token mismatch`,
+  spawned nothing.
+- `{"id":"mb.profile.leaf-alt","dry_run":true}` → echoed `would`, spawned nothing.
+- No `ssh` process observed for any of the three, and the action log shows only
+  `confirm-issued` / `confirm-rejected` / `DRYRUN-payload` lines — never `verify-start`.
 
 ### `mb.*` action allowlist (`services/deviceinfo/mb.js`)
 
-✅ Verified shape (source read + the DRYRUN response above):
+Unchanged from the prior pass — the ACTIONS stayed; only the state DERIVATION moved to
+the contract:
 
 | id | remote cmd | ports | verifyType |
 |---|---|---|---|
@@ -202,20 +222,12 @@ unit with it exported first) — never assume a client-side env prefix reaches t
 | `mb.pcreate.start` | `cd ~ && ./pcreate.sh start` | 8188 | up (no completion phase — ComfyUI has no `/v1/chat/completions`) |
 | `mb.pcreate.stop` | `cd ~ && ./pcreate.sh stop` | 8188 | down |
 
-✅ **`mb.profile.leaf-alt` fired for real during this session's gate testing** (the DRYRUN
-gotcha above) — confirmed via read-only `/v1/models` probes: worker seat flipped to
-`/models/qwen38-27b-heretic/Qwen3.8-27B-heretic-ara.i1-Q6_K.gguf`, senior seat went down
-(leaf-alt is worker-only), `lastResult: {id:"mb.profile.leaf-alt", ok:true, ms:17043}`. This is
-independent confirmation the whole chain (ssh spawn → launch grace → health poll →
-completion probe → `lastResult`) works end to end on real hardware — a byproduct of an
-incident, not a planned test, and the box was left off its `chat` resting default as a
-result (see the amend log / session incident report for resolution).
-
 `ssh` is invoked via `execFile` argv (`['-o','BatchMode=yes','-o','ConnectTimeout=10','fleet-host', cmd]`)
-— never a shell string — matching `server.js`'s own `spawnAction` discipline. One in-flight
-`mb.*` op at a time; `profile.sh`'s `stop_all` makes concurrent flips destructive.
+— never a shell string — matching `server.js`'s own `spawnAction` discipline, and only
+after a valid `confirm_token` is presented. One in-flight `mb.*` op at a time;
+`profile.sh`'s `stop_all` makes concurrent flips destructive — unchanged, hardware-proven.
 
-### Switching state machine — phases and gates
+### Switching state machine — phases and gates (unchanged, hardware-proven)
 
 1. **`launch`** (10 s grace) — the first health poll must outlive `stop_all`'s teardown or
    it passes against the outgoing server (observed on hardware, first live flip

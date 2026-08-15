@@ -1,13 +1,35 @@
 'use strict'
 
 const { execFile } = require('node:child_process')
+const crypto = require('node:crypto')
 
 // Module-level state
 let switching = null        // { id, target, phase, startedAt, budgetMs } or null
 let lastResult = null       // { id, ok, ms, error? } or null
 
+// Single-slot pending confirmation -- only one mb.* action can be in flight
+// (the existing `switching` guard already forbids concurrent switches), so a
+// single pending-confirm slot is sufficient; a second unconfirmed request
+// simply replaces it.
+let pendingConfirm = null   // { id, token, createdAtMs, used }
+
 const MB_HOST = '192.0.2.10'
 const SOURCE_TIMEOUT_MS = 2000
+const CONFIRM_TOKEN_TTL_MS = 30_000
+
+// The fleet aggregator -- the ONE producer of fleet state (fleet-state/1).
+// See fleet-aggregator/docs/fleet-state-contract.md: "one producer, many consumers.
+// Nothing downstream should re-derive fleet state by polling /v1/models
+// itself." This service used to duplicate that leaf-inference logic; it now
+// only fetches and re-exports the aggregator's document verbatim.
+const FLEET_STATE_URL = 'http://localhost:8095/fleet-state.json'
+// The aggregator serves a cached snapshot (its own poll cadence is decoupled
+// from consumer poll rate -- contract "Endpoint" section), so this fetch
+// never blocks on a live probe. Still give it headroom above this service's
+// own SOURCE_TIMEOUT_MS (2000ms) -- a client timeout equal to a server's own
+// timeout loses the race every time, the exact trap already hit against THIS
+// service's own timeout (device/src/deviceInfo.ts:75-86).
+const FLEET_STATE_TIMEOUT_MS = 4000
 
 /** llama-server exposes /health; ComfyUI (:8188) has no such route — its 404
  *  read as "not up" forever (observed: pcreate.start verify false-failed at
@@ -31,110 +53,101 @@ async function fetchWithTimeout(url, ms, init) {
 // Public API
 // ---------------------------------------------------------------------------
 
-module.exports = { readMbState, runMbAction, __testCompletion: (port) => probeCompletion(port) }
+module.exports = {
+  readMbState,
+  readFleetState,
+  runMbAction,
+  __testCompletion: (port) => probeCompletion(port),
+}
 
 /**
  * readMbState() → Promise<object>, NEVER throws/rejects.
- * Runs 7 probes in parallel (2 seats + 1 swarm side-model + 4 aux lanes),
- * each with a 2000ms AbortController timeout.
+ * Controller-owned state ONLY (the fleet-state contract §4): the action WE
+ * fired (`switching`) and its terminal outcome (`lastResult`). Everything
+ * else that used to live here (reachable/profile/workerModel/seniorModel/
+ * sideModel/herald/pcreate/seats/leaves/aux) is now the contract's job -- see
+ * `readFleetState()` below.
  */
 async function readMbState() {
-  const [wRes, sRes, sidRes, auxFlmRes, auxTtsRes, auxPyRes, auxPcreateRes] = await Promise.allSettled([
-    probeModels(8081),
-    probeModels(8080),
-    probeModels(8082),
-    probeAux(8091),
-    probeAux(8092),
-    probeAux(8093),
-    probeAux(8188),
-  ])
-
-  const rejectedProbe = { up: false, id: null, error: 'probe rejected', probedAtMs: Date.now() }
-  const rejectedAux = { up: false, probedAtMs: Date.now() }
-  const worker = wRes.status === 'fulfilled' ? wRes.value : rejectedProbe
-  const senior = sRes.status === 'fulfilled' ? sRes.value : rejectedProbe
-  const side = sidRes.status === 'fulfilled' ? sidRes.value : rejectedProbe
-  const auxFlm = auxFlmRes.status === 'fulfilled' ? auxFlmRes.value : rejectedAux
-  const auxTts = auxTtsRes.status === 'fulfilled' ? auxTtsRes.value : rejectedAux
-  const auxPy = auxPyRes.status === 'fulfilled' ? auxPyRes.value : rejectedAux
-  const auxPcreate = auxPcreateRes.status === 'fulfilled' ? auxPcreateRes.value : rejectedAux
-
-  const workerModel = worker.id
-  const seniorModel = senior.id
-  const sideModel = side.id
-  const pcreate = auxPcreate.up
-
-  const reachable = workerModel !== null || seniorModel !== null
-
-  // Profile rules (substring tests on model id)
-  // ⚠ TWO consumers of this truth table: this file and fleet-aggregator's mb-ensure.sh
-  //   current_leaf(). A fingerprint change here needs the same edit there
-  //   (route-backend.sh is immune — it routes by seat, never by model name).
-  // ⚠ swarm detection must match Ornith SPECIFICALLY on 8082, never mere port-presence.
-  // ⚠ chat RESEATED 2026-08-14: it is now Gemma-4-26B on the WORKER seat (:8081) +
-  //   gpt-oss-120b on the SENIOR seat (:8080), and no longer uses :8082 at all. This test
-  //   used to key on gpt-oss@:8081 and silently reported "no profile" after the reseat.
-  //   swarm's Gemma sits on :8083, so 26B-on-:8081 is unique to chat.
-  let profile = null
-  if (workerModel) {
-    if (workerModel.includes('gemma-4-26B') || workerModel.includes('gemma4-26b')) profile = 'chat'
-    else if (workerModel.includes('qwen36-35b') || workerModel.includes('Qwen3.6-35B')) {
-      profile = sideModel && sideModel.includes('Ornith') ? 'swarm' : 'prod'
-    }
-    else if (workerModel.includes('Ornith')) profile = 'pair'
-    // 🔴 ORDERING TRAP -- leaf-alt's model path ("/models/qwen38-27b-heretic/
-    // Qwen3.8-27B-heretic-ara.i1-Q6_K.gguf") CONTAINS both of leaf-mid's unique
-    // substrings ("qwen38-27b" AND "Qwen3.8-27B"). `heretic` MUST be tested
-    // BEFORE either leaf-mid substring or the uncensored leaf silently reports as
-    // the stock one. Do not reorder these two branches.
-    else if (workerModel.includes('heretic')) profile = 'leaf-alt'
-    else if (workerModel.includes('qwen38-27b') || workerModel.includes('Qwen3.8-27B')) profile = 'leaf-mid'
-  }
-  if (profile === null && workerModel === null && seniorModel && seniorModel.includes('DeepSeek-V4-Flash')) {
-    profile = 'leaf-deep'
-  }
-
-  const herald = seniorModel ? seniorModel.includes('Qwen3.5-122B') : false
-
   const sw = switching
   const elapsedMs = sw ? Date.now() - sw.startedAt : undefined
-
-  const seats = [
-    { seat: 'worker', port: 8081, up: worker.up, occupant: workerModel, occupantShort: occupantShort(workerModel), probedAtMs: worker.probedAtMs, error: worker.error },
-    { seat: 'senior', port: 8080, up: senior.up, occupant: seniorModel, occupantShort: occupantShort(seniorModel), probedAtMs: senior.probedAtMs, error: senior.error },
-  ]
-
-  const leaves = Object.entries(LEAF_META).map(([id, meta]) => ({
-    id, active: profile === id, tier: meta.tier, flags: meta.flags, seats: meta.seats,
-  }))
-
-  const aux = [
-    { id: 'flm-real', port: 8091, up: auxFlm.up, probedAtMs: auxFlm.probedAtMs },
-    { id: 'tts-server', port: 8092, up: auxTts.up, probedAtMs: auxTts.probedAtMs },
-    { id: 'py', port: 8093, up: auxPy.up, probedAtMs: auxPy.probedAtMs },
-    { id: 'pcreate', port: 8188, up: auxPcreate.up, probedAtMs: auxPcreate.probedAtMs },
-  ]
-
+  // pcreate liveness is CONTROLLER-OWNED, not fleet state, and probing it here
+  // is NOT the duplication the contract forbids: fleet-state/1 deliberately
+  // does not model pcreate at all (it holds no seat and is not a leaf -- see
+  // the fleet-state contract §3), so there is no producer-side truth
+  // to defer to and no leaf-inference logic being re-derived. We ship a
+  // start/stop verb for it, and a verb whose current state is unknowable
+  // renders as two blind buttons. Remove this the moment the aggregator grows
+  // `commands.services` (the ask in requirements §2.2).
+  // Gate is ANY HTTP answer at `/`: ComfyUI has no /health (a 404 there read
+  // as "never up" and false-failed a real pcreate.start at 180s).
+  const pcreate = await probeAnyHttp(8188)
   return {
-    reachable,
-    profile,
-    workerModel,
-    seniorModel,
-    sideModel,
-    herald,
-    pcreate,
-    seats,
-    leaves,
-    aux,
     switching: sw ? { id: sw.id, target: sw.target, phase: sw.phase, startedAtMs: sw.startedAt, elapsedMs, budgetMs: sw.budgetMs } : null,
     lastResult,
+    pcreate: { up: pcreate, port: 8188, probedAtMs: Date.now() },
+  }
+}
+
+/** ANY HTTP answer counts as up -- see the pcreate note in readMbState. */
+async function probeAnyHttp(port) {
+  try {
+    await fetchWithTimeout(`http://${MB_HOST}:${port}/`, SOURCE_TIMEOUT_MS)
+    return true
+  } catch (_) {
+    return false
   }
 }
 
 /**
- * runMbAction(id) → Promise<{id,target}|{error}>.
+ * readFleetState() → Promise<{ doc, error }>, NEVER throws/rejects.
+ * `doc` is the fleet-state/1 document VERBATIM (unknown keys untouched --
+ * contract law 7, additive evolution) when the aggregator answered with a
+ * valid JSON object; otherwise `doc` is null and `error` names the reason.
+ * No fallback to probing fleet-host directly if this fails -- that would
+ * resurrect the duplicate leaf-inference logic the contract forbids.
  */
-async function runMbAction(id) {
+async function readFleetState() {
+  try {
+    const res = await fetchWithTimeout(FLEET_STATE_URL, FLEET_STATE_TIMEOUT_MS)
+    if (!res.ok) return { doc: null, error: `http ${res.status}` }
+    let body
+    try {
+      body = await res.json()
+    } catch (err) {
+      return { doc: null, error: `invalid JSON: ${String(err?.message ?? err)}` }
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return { doc: null, error: 'response was not a JSON object' }
+    }
+    return { doc: body, error: null }
+  } catch (err) {
+    return { doc: null, error: String(err?.message ?? err) }
+  }
+}
+
+/**
+ * runMbAction(id, opts) → Promise<object>.
+ *
+ * Two-step confirm (owner requirement, prompted by a real incident: a
+ * dry-run env var set on a `curl` invocation instead of the service's own
+ * environment never reached the server process, and a real leaf flip ran
+ * against a box under load):
+ *
+ *   1. POST {id}                -> does NOT execute. Returns a short-lived
+ *      (30s), single-use `confirm_token` bound to this id, plus `would` (the
+ *      command that WOULD run).
+ *   2. POST {id, confirm_token} -> executes iff the token matches, is
+ *      unexpired, unused, and bound to this exact id. Otherwise rejected.
+ *
+ * `dry_run: true` in the request payload is the honest per-request
+ * mechanism: it echoes `would` and executes nothing, independent of (and in
+ * addition to) the CARTHING_ACTION_DRYRUN env-var kill-switch server.js
+ * still checks first. An env var on the CLIENT (e.g. a `curl` invocation) is
+ * meaningless here -- only the payload flag or the SERVICE PROCESS's own
+ * environment can suppress execution.
+ */
+async function runMbAction(id, opts = {}) {
   const ACTION_ALLOWLIST = {
     'mb.profile.chat':    { cmd: 'cd ~ && ./profile.sh chat',    ports: [8081], verifyType: 'completion' },
     'mb.profile.prod':    { cmd: 'cd ~ && ./profile.sh prod',    ports: [8081], verifyType: 'completion' },
@@ -163,6 +176,26 @@ async function runMbAction(id) {
         ? id.slice('mb.pcreate.'.length)
         : id
 
+  const would = { id, target, cmd: entry.cmd, ports: entry.ports, verifyType: entry.verifyType }
+
+  if (opts.dry_run === true) {
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=DRYRUN-payload (not spawned)`)
+    return { id, target, dry_run: true, would }
+  }
+
+  if (!opts.confirm_token) {
+    const token = issueConfirmToken(id)
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=confirm-issued (not spawned)`)
+    return { id, target, confirm_token: token, expires_in_s: CONFIRM_TOKEN_TTL_MS / 1000, would }
+  }
+
+  const check = validateConfirmToken(id, opts.confirm_token)
+  if (!check.ok) {
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=confirm-rejected(${check.reason})`)
+    return { error: `confirm_token rejected: ${check.reason}` }
+  }
+  pendingConfirm.used = true
+
   switching = { id, target, phase: 'launch', startedAt: Date.now(), budgetMs: computeBudgetMs(id, entry) }
 
   const argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'fleet-host', entry.cmd]
@@ -176,6 +209,27 @@ async function runMbAction(id) {
   runVerify(id, entry, target).catch(() => {})
 
   return { id, target }
+}
+
+/** Issue a fresh single-use confirm token bound to `id`, replacing any prior
+ *  pending confirmation (only one mb.* action can legitimately be pending
+ *  confirmation at a time -- `switching` already forbids concurrent flips). */
+function issueConfirmToken(id) {
+  const token = crypto.randomBytes(16).toString('hex')
+  pendingConfirm = { id, token, createdAtMs: Date.now(), used: false }
+  return token
+}
+
+/** Reject reasons are deliberately specific (expired / reused / wrong id /
+ *  mismatch / none pending) -- an operator debugging a rejected flip needs
+ *  to know WHICH invariant broke. */
+function validateConfirmToken(id, token) {
+  if (!pendingConfirm) return { ok: false, reason: 'no pending confirmation' }
+  if (pendingConfirm.used) return { ok: false, reason: 'confirm_token already used' }
+  if (Date.now() - pendingConfirm.createdAtMs > CONFIRM_TOKEN_TTL_MS) return { ok: false, reason: 'confirm_token expired' }
+  if (pendingConfirm.id !== id) return { ok: false, reason: 'confirm_token bound to a different action id' }
+  if (pendingConfirm.token !== token) return { ok: false, reason: 'confirm_token mismatch' }
+  return { ok: true }
 }
 
 /** The up-budget actually in force for a given action -- mirrors the budgets
@@ -329,70 +383,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// ---------------------------------------------------------------------------
-// Probes
-// ---------------------------------------------------------------------------
-
-/** `up` is the HTTP-answered flag, kept separate from `id` -- a seat can
- *  answer 200 with an empty roster, and that is still "up" (per
- *  the fleet-state contract §2: not inferrable from occupant===null). */
-async function probeModels(port) {
-  try {
-    const res = await fetchWithTimeout(`http://${MB_HOST}:${port}/v1/models`, SOURCE_TIMEOUT_MS)
-    const probedAtMs = Date.now()
-    if (!res.ok) return { up: false, id: null, error: `http ${res.status}`, probedAtMs }
-    const body = await res.json()
-    const data = Array.isArray(body?.data) ? body.data : []
-    return { up: true, id: data[0]?.id ?? null, error: null, probedAtMs }
-  } catch (err) {
-    return { up: false, id: null, error: String(err?.message ?? err), probedAtMs: Date.now() }
-  }
-}
-
-/** Aux-lane liveness -- ANY HTTP answer counts (same gate the pcreate probe
- *  always used: ComfyUI has no /health and a 404 there previously read as
- *  "never up", false-failing a real pcreate.start). Read-only lanes only. */
-async function probeAux(port) {
-  try {
-    await fetchWithTimeout(`http://${MB_HOST}:${port}/`, SOURCE_TIMEOUT_MS)
-    return { up: true, probedAtMs: Date.now() }
-  } catch (_) {
-    return { up: false, probedAtMs: Date.now() }
-  }
-}
-
-/** Server-computed display name for a seat occupant, <=12 chars, uppercase.
- *  Extends device/src/components/MbSlot.tsx's seniorShort() to both seats
- *  and drops its herald-suppression special case -- that suppression is a
- *  UI concern (device/src/components/fleet decides what to hide); the
- *  server reports the truth. */
-function occupantShort(m) {
-  if (!m) return null
-  if (m.includes('gpt-oss-120b')) return '120B'
-  if (m.includes('DeepSeek-V4-Flash')) return 'LEAF-DEEP'
-  if (m.includes('Qwen3.5-122B')) return '122B'
-  if (m.includes('gemma-4-26B') || m.includes('gemma4-26b')) return 'GEMMA26B'
-  if (m.includes('Ornith')) return 'ORNITH9B'
-  // ⚠ Same ordering trap as the profile chain in readMbState above --
-  // heretic's path contains the stock substring, so it must be tested first.
-  if (m.includes('heretic')) return 'LEAF-ALT'
-  if (m.includes('qwen38-27b') || m.includes('Qwen3.8-27B')) return 'LEAF-MID'
-  if (m.includes('qwen36-35b') || m.includes('Qwen3.6-35B')) return 'Q35-35B'
-  const base = m.split('/').pop() ?? m
-  return base.replace(/\.gguf$/, '').slice(0, 12).toUpperCase()
-}
-
-// Leaf roster metadata -- tier/flags/seats are static per leaf; `active` is
-// derived once from the SAME fingerprint chain that sets `profile` (see
-// readMbState) so there is exactly one source of truth for "what's running".
-const LEAF_META = {
-  chat:  { tier: 'daily',          flags: [],              seats: ['worker', 'senior'] },
-  prod:  { tier: 'daily',          flags: [],              seats: ['worker'] },
-  // pair reseats BOTH seats: Ornith-9B @:8081 AND LEAF-DEEP @:8080 (profile.sh
-  // "P-PAIR: Ornith-9B fast lane @:8081 + LEAF-DEEP senior @:8080").
-  pair:  { tier: 'daily',          flags: [],              seats: ['worker', 'senior'] },
-  swarm: { tier: 'daily',          flags: [],              seats: ['worker'] },
-  leaf-deep: { tier: 'daily',          flags: [],              seats: ['senior'] },
-  leaf-mid:   { tier: 'ready-for-duty', flags: [],              seats: ['worker'] },
-  leaf-alt:  { tier: 'ready-for-duty', flags: ['uncensored'],  seats: ['worker'] },
-}
+// Leaf fingerprinting (heretic/qwen38-27b/gemma/Ornith substring matching),
+// occupantShort(), LEAF_META, and the invented seats/leaves/aux blocks that
+// used to live here have been REMOVED -- that was this service duplicating
+// the leaf-inference logic that fleet-state/1's producer already owns
+// (fleet-aggregator/docs/fleet-state-contract.md: "one producer, many consumers").
+// See readFleetState() above for the replacement.

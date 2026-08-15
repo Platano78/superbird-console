@@ -1,7 +1,25 @@
 import type { CSSProperties } from 'react'
-import type { LeafState, MbState } from '../../deviceInfo'
+import type { FleetHost, FleetStateDoc } from '../../deviceInfo'
 import { requestFastPoll } from '../../deviceInfo'
 import type { FleetPage } from '../../useFleetNav'
+
+/** Stable host id -- the contract says consumers may hardcode this
+ *  (fleet-aggregator/docs/fleet-state-contract.md: `"id": "fleet-host" // stable key
+ *  — consumers may hardcode this`). Primary surface for this device. */
+export const PRIMARY_HOST_ID = 'fleet-host'
+
+export function primaryHost(doc: FleetStateDoc | null): FleetHost | null {
+  if (!doc) return null
+  return doc.hosts.find((h) => h.id === PRIMARY_HOST_ID) ?? null
+}
+
+/** Every host that isn't the primary surface -- rendered monitoring-only
+ *  (task item 4: "do not build a host switcher unless it falls out
+ *  naturally"). Order preserved from the document. */
+export function secondaryHosts(doc: FleetStateDoc | null): FleetHost[] {
+  if (!doc) return []
+  return doc.hosts.filter((h) => h.id !== PRIMARY_HOST_ID)
+}
 
 // Icons are PLAIN RUNTIME STRINGS, not ES-module asset imports — see
 // MbSlot.tsx / ControlSlot.tsx for why an asset-URL import blank-screens
@@ -13,9 +31,10 @@ export function iconUrl(file: string) {
 // Explicit top/right/bottom/left, not `inset` shorthand.
 export const FILL_STYLE: CSSProperties = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }
 
-/** Device shows a source as stale past ~15s (3 poll intervals at the 5s
- *  steady cadence) — the fleet-state contract §4. */
-export const STALE_MS = 15000
+/** Device greys a probe as stale past ~15s of its OWN `age_s` (law 5: trust
+ *  the per-probe age, never the document's generated_at). Grey the
+ *  individual tile that went stale, never the whole page. */
+export const STALE_S = 15
 
 const ACTION_URL = 'http://127.0.0.1:8791/action'
 
@@ -38,47 +57,107 @@ export function leafDisplayName(id: string): string {
   return id.toUpperCase()
 }
 
-/** Dailies first, then ready-for-duty (leaf-mid/leaf-alt) grouped — owner ruling
- *  2026-08-15, the fleet-state contract §2. This ordering is also
- *  what the cursor index walks, so every caller (LeavesPage's render order,
- *  itemCountFor, resolveConfirmAction) must use this same function. */
-export function orderedLeaves(mb: MbState): LeafState[] {
-  const dailies = mb.leaves.filter((l) => l.tier === 'daily')
-  const ready = mb.leaves.filter((l) => l.tier === 'ready-for-duty')
-  return [...dailies, ...ready]
+// Grouping/tone below (daily vs "ready for duty", uncensored) is DEVICE-SIDE
+// theme, same footing as leafDisplayName's leaf-deep->LEAF-DEEP rename -- it is
+// NOT part of the contract (fleet-state/1 carries no tier field). The roster
+// itself always comes from `commands.flip`, never this list: an unrecognised
+// leaf name still renders, just falls into the "ready for duty" bucket by
+// default instead of crashing or being dropped.
+const DAILY_LEAVES = ['chat', 'prod', 'swarm', 'pair', 'leaf-deep']
+export function isReadyForDuty(id: string): boolean {
+  return !DAILY_LEAVES.includes(id)
+}
+export function isUncensoredLeaf(id: string): boolean {
+  return id === 'leaf-alt'
 }
 
-/** Number of cursor-navigable (confirmable) items per page. SEATS carries
- *  exactly one verb -- herald summon/dismiss, attached to the senior seat
- *  (owner ruling: herald is a summon ONTO the senior seat, not a leaf, so
- *  the verb lives on the seat it acts on, not as a peer tile in LEAVES). The
- *  worker seat has no verb of its own. */
-export function itemCountFor(page: FleetPage, mb: MbState | null): number {
-  if (!mb) return 0
-  if (page === 'seats') return 1 // the senior seat's herald summon/dismiss
-  if (page === 'leaves') return mb.leaves.length
-  if (page === 'aux') return 1 // pcreate is the one navigable/actionable item
-  return 0 // compose: disabled placeholder in Phase C, nothing confirmable
+/** `commands.flip` ordered dailies-first, then everything else in the order
+ *  the contract gave it — the roster itself is never hardcoded, only this
+ *  display grouping is. Every caller (LeavesPage's render order,
+ *  itemCountFor, resolveConfirmAction) must use this same function so the
+ *  cursor index and the rendered order never diverge. */
+export function orderedFlipTargets(host: FleetHost | null): string[] {
+  if (!host) return []
+  const flip = host.commands.flip
+  const dailies = DAILY_LEAVES.filter((id) => flip.includes(id))
+  const rest = flip.filter((id) => !DAILY_LEAVES.includes(id))
+  return [...dailies, ...rest]
+}
+
+/** True while ANY seat on the host is `loading` — a flip issued into a
+ *  loading seat is how you get a half-up leaf (contract field notes).
+ *  LEAVES must suppress its flip controls for the whole host while this
+ *  holds, not just the one seat that's loading. */
+export function hostLoading(host: FleetHost | null): boolean {
+  if (!host) return false
+  return host.seats.some((s) => s.state === 'loading')
+}
+
+/** True when this host's senior seat can take a herald summon/dismiss verb
+ *  at all (`commands.summon` carries "herald"). Hosts with no summon verb
+ *  (secondary-host, router-5080) render seats read-only. */
+export function heraldCapable(host: FleetHost | null): boolean {
+  return !!host?.commands.summon.includes('herald')
+}
+
+/** True when the senior seat is currently held by a herald-class occupant --
+ *  drives DISMISS vs SUMMON. Read straight off the seat's own `herald` flag,
+ *  never inferred from occupant.short (never parsed, contract law). */
+export function heraldActive(host: FleetHost | null): boolean {
+  return !!host?.seats.find((s) => s.id === 'senior')?.herald
+}
+
+/** `occupant.short` is best-effort and, on the live producer today, a raw
+ *  33+ char GGUF basename -- see the fleet-state contract §2.1 (we
+ *  asked fleet-aggregator for a hard-capped `short_display` field; this truncation is
+ *  the stopgap until it lands). Never parses the string, just clips it. */
+export function truncateOccupant(short: string | null | undefined, max = 11): string {
+  if (!short) return '--'
+  return short.length > max ? `${short.slice(0, max - 1)}…` : short
+}
+
+/** Number of cursor-navigable (confirmable) items per page. SEATS carries at
+ *  most one verb -- herald summon/dismiss, attached to the senior seat, only
+ *  when the host's `commands.summon` offers it. LEAVES walks
+ *  `commands.flip` (empty on lifeline/bench hosts -> zero, monitoring-only).
+ *  AUX carries pcreate's single toggle verb -- controller-owned live on/off
+ *  state (`mb.pcreate.up`), NOT part of fleet-state/1 (see MbPcreate in
+ *  deviceInfo.ts / the fleet-state contract §2.2, §3). `host` alone
+ *  gates the page (aux is independent of which host is primary today), but
+ *  the count itself doesn't need `mb` -- it's always exactly one tile. */
+export function itemCountFor(page: FleetPage, host: FleetHost | null): number {
+  if (!host) return 0
+  if (page === 'seats') return heraldCapable(host) ? 1 : 0
+  if (page === 'leaves') return hostLoading(host) ? 0 : orderedFlipTargets(host).length
+  if (page === 'aux') return 1 // pcreate's single start/stop toggle
+  return 0 // thermals: monitor-only. compose: disabled placeholder.
 }
 
 /** What the dial's confirm (Enter, no ask pending) fires for the current
  *  page+cursor — the SAME action id the on-screen tiles POST, so dial and
- *  touch share one two-tap confirm state (see MbSlot's useConfirmArm). */
-export function resolveConfirmAction(page: FleetPage, cursor: number, mb: MbState): string | null {
+ *  touch share one two-tap confirm state (see MbSlot's useConfirmArm).
+ *  `pcreateUp` is `mb.pcreate.up` -- controller-owned, not part of
+ *  fleet-state/1 (see itemCountFor's doc) -- it's the only page whose
+ *  action id depends on state outside `host`. */
+export function resolveConfirmAction(page: FleetPage, cursor: number, host: FleetHost | null, pcreateUp: boolean): string | null {
+  if (!host) return null
   if (page === 'seats') {
-    if (cursor !== 0) return null
+    if (cursor !== 0 || !heraldCapable(host)) return null
     // Unlike a leaf tile, this stays actionable WHILE ACTIVE -- active
     // (herald summoned) is precisely the state DISMISS must fire from.
-    return mb.herald ? 'mb.herald.dismiss' : 'mb.herald.summon'
+    return heraldActive(host) ? 'mb.herald.dismiss' : 'mb.herald.summon'
   }
   if (page === 'leaves') {
-    const leaf = orderedLeaves(mb)[cursor]
-    if (!leaf || leaf.active) return null // re-flipping to the active leaf is a no-op, same as touch
-    return `mb.profile.${leaf.id}`
+    if (hostLoading(host)) return null // suppressed while a seat is mid-flip
+    const leaf = orderedFlipTargets(host)[cursor]
+    if (!leaf || leaf === host.leaf?.name) return null // re-flipping the active leaf is a no-op
+    return `mb.profile.${leaf}`
   }
   if (page === 'aux') {
     if (cursor !== 0) return null
-    return mb.pcreate ? 'mb.pcreate.stop' : 'mb.pcreate.start'
+    // Same rule as the herald tile: stays actionable WHILE ACTIVE -- active
+    // (pcreate up) is precisely the state STOP must fire from.
+    return pcreateUp ? 'mb.pcreate.stop' : 'mb.pcreate.start'
   }
   return null
 }

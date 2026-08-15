@@ -4,8 +4,8 @@ import { useState } from 'react'
 // fleet-host-side launcher it needs is a separate, blocked artifact) --
 // it still cycles into the page order so M reaches it and the "blocked"
 // state is visible, never a page that's silently missing.
-export type FleetPage = 'seats' | 'leaves' | 'aux' | 'compose'
-export const FLEET_PAGES: FleetPage[] = ['seats', 'leaves', 'aux', 'compose']
+export type FleetPage = 'seats' | 'leaves' | 'aux' | 'thermals' | 'compose'
+export const FLEET_PAGES: FleetPage[] = ['seats', 'leaves', 'aux', 'thermals', 'compose']
 
 type Params = {
   /** Number of navigable (confirmable) items on the given page. Called at
