@@ -123,7 +123,21 @@ async function readFleetState() {
     }
     return { doc: body, error: null }
   } catch (err) {
-    return { doc: null, error: String(err?.message ?? err) }
+    // The device renders this string verbatim, so it has to read as an
+    // operator diagnosis, not an internals leak. An AbortController timeout
+    // surfaces as "This operation was aborted", which shipped to the panel and
+    // told the owner nothing about what was wrong or where; ECONNREFUSED is
+    // the far more common case (aggregator simply not running) and deserves
+    // to say so. Anything unrecognized still falls through verbatim rather
+    // than being flattened into a vague catch-all.
+    const raw = String(err?.message ?? err)
+    if (err?.name === 'AbortError' || /aborted/i.test(raw)) {
+      return { doc: null, error: `aggregator timeout (${FLEET_STATE_TIMEOUT_MS}ms)` }
+    }
+    if (/ECONNREFUSED|fetch failed/i.test(raw)) {
+      return { doc: null, error: 'aggregator not running' }
+    }
+    return { doc: null, error: raw }
   }
 }
 

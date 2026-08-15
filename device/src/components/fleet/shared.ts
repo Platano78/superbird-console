@@ -110,10 +110,20 @@ export function heraldActive(host: FleetHost | null): boolean {
 /** `occupant.short` is best-effort and, on the live producer today, a raw
  *  33+ char GGUF basename -- see the fleet-state contract §2.1 (we
  *  asked fleet-aggregator for a hard-capped `short_display` field; this truncation is
- *  the stopgap until it lands). Never parses the string, just clips it. */
+ *  the stopgap until it lands).
+ *
+ *  ⚠ Takes the BASENAME before clipping. The fallback path (fleet_state down)
+ *  passes a raw `/v1/models` path, and clipping that from the left produced
+ *  "/MODELS/GE…" and "/MODELS/GP…" on hardware -- every model rendering as its
+ *  identical directory prefix, so a 26B and a 120B were indistinguishable on
+ *  the one screen whose entire job is telling you who is in the seats.
+ *  Basename-then-clip is purely mechanical (no substring is mapped to a
+ *  name), and it is a no-op for the contract path, which already supplies a
+ *  bare basename with no slashes. */
 export function truncateOccupant(short: string | null | undefined, max = 11): string {
   if (!short) return '--'
-  return short.length > max ? `${short.slice(0, max - 1)}…` : short
+  const base = (short.split('/').pop() || short).replace(/\.gguf$/i, '')
+  return base.length > max ? `${base.slice(0, max - 1)}…` : base
 }
 
 /** Number of cursor-navigable (confirmable) items per page. SEATS carries at
