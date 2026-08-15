@@ -13,7 +13,11 @@ let lastResult = null       // { id, ok, ms, error? } or null
 // simply replaces it.
 let pendingConfirm = null   // { id, token, createdAtMs, used }
 
-const MB_HOST = '192.0.2.10'
+const MB_HOST = process.env.MB_HOST || '192.0.2.10'
+// ssh alias for the fleet host, resolved from the invoking user's ssh config.
+// Deliberately an alias rather than a host: the user, port and key stay in ssh
+// config where they belong, and never appear in this repo.
+const MB_SSH_HOST = process.env.MB_SSH_HOST || 'fleet-host'
 const SOURCE_TIMEOUT_MS = 2000
 const CONFIRM_TOKEN_TTL_MS = 30_000
 
@@ -267,7 +271,7 @@ async function runMbAction(id, opts = {}) {
 
   switching = { id, target, phase: 'launch', startedAt: Date.now(), budgetMs: computeBudgetMs(id, entry) }
 
-  const argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'fleet-host', entry.cmd]
+  const argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', MB_SSH_HOST, entry.cmd]
 
   // Fire-and-forget spawn
   execFile('ssh', argv, { timeout: 300000, maxBuffer: 4 * 1024 * 1024 }, (err) => {
@@ -314,13 +318,13 @@ function computeBudgetMs(id, entry) {
 
 /** Log a verify-start line matching server.js logAction format. */
 function logVerifyStart(id, entry) {
-  const sshArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'fleet-host', entry.cmd]
+  const sshArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', MB_SSH_HOST, entry.cmd]
   console.log(`[action] ${new Date().toISOString()} id=${id} argv=[${sshArgs.join(', ')}] exit=verify-start`)
 }
 
 /** Terminal log matching server.js logAction format. */
 function logVerifyTerminal(id, entry, logExit) {
-  const sshArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'fleet-host', entry.cmd]
+  const sshArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', MB_SSH_HOST, entry.cmd]
   console.log(`[action] ${new Date().toISOString()} id=${id} argv=[${sshArgs.join(', ')}] exit=${logExit}`)
 }
 

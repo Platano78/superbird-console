@@ -25,7 +25,7 @@
 import { spawn } from 'node:child_process'
 
 // ADB must be the WINDOWS binary — see scripts/keep-adb-reverse.sh.
-const ADB = '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
+const ADB = process.env.CAR_THING_ADB || '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
 // ⚠ ALWAYS address the Car Thing by serial. A bare `adb shell`/`adb forward`
 // fails outright the moment any second device is attached — see
 // scripts/backlight-daemon.mjs header, took production down 2026-08-02.

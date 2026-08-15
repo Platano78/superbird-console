@@ -29,10 +29,17 @@ const ROUTER_URL = 'http://127.0.0.1:8081/v1/models'
 // box, not this one — the ":8084" shorthand used everywhere omits the host and
 // probing 127.0.0.1 reports a healthy service as OFFLINE. `/health` is the
 // endpoint the session-start fleet probe uses; match it.
-const CODER_URL = 'http://192.0.2.11:8084/health'
-const QUEUE_ROOT = '/home/youruser/project/piplay/pi-harness/.pi/queue'
+const CODER_HOST = process.env.CODER_HOST || '192.0.2.11'
+const CODER_URL = `http://${CODER_HOST}:8084/health`
+// Sibling projects in the same workspace, not part of this repo -- derived
+// from this file's own location (never a hardcoded home) so the service
+// still finds them if the workspace is cloned somewhere else, and degrades
+// to the honest "unavailable" state documented at the top of this file if
+// they don't exist at all (e.g. this repo checked out standalone).
+const WORKSPACE_ROOT = path.join(__dirname, '..', '..', '..')
+const QUEUE_ROOT = path.join(WORKSPACE_ROOT, 'piplay', 'pi-harness', '.pi', 'queue')
 const QUEUE_DIRS = ['pending', 'in-progress', 'done', 'review', 'escalated', 'failed']
-const OBLIGATIONS_SCRIPT = '/home/youruser/project/_standards/obligations/obligations.py'
+const OBLIGATIONS_SCRIPT = path.join(WORKSPACE_ROOT, '_standards', 'obligations', 'obligations.py')
 const OBLIGATIONS_CACHE_MS = 30_000
 
 // -- slice 5: CONTROL (model load/kill + device-info strip) --
@@ -42,7 +49,7 @@ const OBLIGATIONS_CACHE_MS = 30_000
 // device/emulator" the instant a second device (e.g. a phone) joins the adb
 // server -- see scripts/keep-adb-reverse.sh for the incident this already
 // caused once.
-const ADB = '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
+const ADB = process.env.CAR_THING_ADB || '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
 const CAR_THING_SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
 // The CONTROL grid's allowlist -- ARRAY ORDER IS GRID ORDER. See its own
 // _comment block for the schema; adding/reordering a button is a JSON edit,

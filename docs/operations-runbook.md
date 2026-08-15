@@ -23,6 +23,32 @@ Car Thing (Chromium kiosk, file:///usr/share/claude-thing/index.html)
 
 Nothing else needs to be running. **DeskThing is not involved.**
 
+## Configuration
+
+Five env vars carry every piece of personal/host infrastructure out of the source, each
+defaulting to the value this box already runs with (unset env = today's behaviour, unchanged):
+
+| Var | Default | What it is |
+|---|---|---|
+| `CAR_THING_SERIAL` | `DEVICESERIAL` | adb device serial. Required once a second adb device (e.g. a phone) is ever attached — see `scripts/keep-adb-reverse.sh`. |
+| `CAR_THING_ADB` | `/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe` | Path to the Windows `adb.exe` used to reach the device over the Windows USB bus (WSL2 has no USB access). |
+| `MB_HOST` | `192.0.2.10` | LAN host running the fleet box — seat-occupancy fallback probes and the pcreate liveness check (`services/deviceinfo/mb.js`). |
+| `MB_SSH_HOST` | `fleet-host` | **ssh alias**, not a host, for firing fleet actions. Deliberately an alias: user/port/key stay in ssh config and never enter this repo. |
+| `CODER_HOST` | `192.0.2.11` | LAN host running the always-on generalist model probed for the FLEET screen's health lamp (`services/deviceinfo/server.js`). ⚠ NOT localhost — probing `127.0.0.1` reports a healthy service as OFFLINE. |
+
+Set them in the systemd user unit (`Environment=CAR_THING_SERIAL=...`) or the shell that runs a
+script directly. `services/deviceinfo/server.js`'s `QUEUE_ROOT`/`OBLIGATIONS_SCRIPT` are derived
+from the service's own file location rather than a var — they point at sibling projects
+(`piplay/pi-harness`, `_standards/obligations`) in the same workspace and simply report
+"unavailable" (never fabricate a value) if those don't exist alongside this repo.
+
+⚠ **`services/deviceinfo/buttons.json`'s CONTROL grid still hardcodes absolute host paths**
+(e.g. `/home/youruser/project/llama-cpp-native/router-control.sh`) — that grid points at a
+*sibling* repo outside `car-thing` entirely, so there's no path inside this repo to derive it
+from. Anyone else running this needs to hand-edit `buttons.json`'s `argv`/`stopArgv` entries to
+point at their own fleet-control scripts (or drop those model-switch buttons — the file degrades
+to an empty grid on a bad/missing entry, never a crash; see `loadButtons()` in `server.js`).
+
 ## The two services (systemd --user)
 
 | Unit | Does |
