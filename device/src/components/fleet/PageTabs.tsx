@@ -1,7 +1,13 @@
 import type { FleetPage } from '../../useFleetNav'
 import { FLEET_PAGES } from '../../useFleetNav'
 
-const LABEL: Record<FleetPage, string> = { seats: 'SEATS', leaves: 'LEAVES', aux: 'AUX', compose: 'COMPOSE' }
+const LABEL: Record<FleetPage, string> = {
+  seats: 'SEATS',
+  leaves: 'LEAVES',
+  aux: 'AUX',
+  thermals: 'THERM',
+  compose: 'COMPOSE',
+}
 
 type Props = {
   page: FleetPage

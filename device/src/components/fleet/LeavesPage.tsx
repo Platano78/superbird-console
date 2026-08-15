@@ -1,5 +1,5 @@
-import type { LeafState, MbState } from '../../deviceInfo'
-import { FILL_STYLE, iconUrl, leafDisplayName, orderedLeaves } from './shared'
+import type { FleetHost } from '../../deviceInfo'
+import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets } from './shared'
 
 // Existing mb-tile art for the five daily leaves. q38/q38h have no dedicated
 // art yet -- reuse the closest existing set (they're visually distinguished
@@ -15,7 +15,7 @@ const LEAF_ICONS: Record<string, { active: string; inactive: string }> = {
 }
 
 type Props = {
-  mb: MbState
+  doc: import('../../deviceInfo').FleetStateDoc | null
   /** null while mb.switching is live -- MbSlot never renders this page then,
    *  but the prop stays optional-safe regardless. */
   cursor: number | null
@@ -29,34 +29,40 @@ type Props = {
   isLatched: (actionId: string) => boolean
 }
 
-function LeafTile({ leaf, actionId, isCursor, isPending, isLatched, onTileTap }: {
-  leaf: LeafState
+function LeafTile({ id, active, loading, actionId, isCursor, isPending, isLatched, onTileTap }: {
+  id: string
+  active: boolean
+  /** True while ANY seat on the host is loading -- suppresses the flip
+   *  control for every tile on this page, not just the active one (a flip
+   *  into a loading seat is how you get a half-up leaf). */
+  loading: boolean
   actionId: string
   isCursor: boolean
   isPending: boolean
   isLatched: boolean
   onTileTap: (actionId: string) => void
 }) {
-  const isUncensored = leaf.flags.includes('uncensored')
-  const isReady = leaf.tier === 'ready-for-duty'
+  const isUncensored = isUncensoredLeaf(id)
+  const isReady = isReadyForDuty(id)
   // Re-flipping to the currently-active leaf is a no-op, same rule the old
-  // profile tiles used -- so active leaves go inert.
-  const isInert = leaf.active
+  // profile tiles used -- and a flip suppressed by a loading seat is inert
+  // too (contract field notes: never issue a flip into a loading seat).
+  const isInert = active || loading
 
   const borderCls = isPending
     ? 'border-amber-400'
     : isLatched
       ? 'border-sky-400'
-      : leaf.active
+      : active
         ? 'border-emerald-400'
         : isCursor
           ? 'border-stone-400'
           : isUncensored
             ? 'border-red-800'
             : 'border-stone-800'
-  const icons = LEAF_ICONS[leaf.id] ?? LEAF_ICONS.chat
-  const art = leaf.active ? icons.active : icons.inactive
-  const scrimAlpha = isPending ? 0.4 : leaf.active ? 0.45 : 0.68
+  const icons = LEAF_ICONS[id] ?? LEAF_ICONS.chat
+  const art = active ? icons.active : icons.inactive
+  const scrimAlpha = isPending ? 0.4 : active ? 0.45 : loading ? 0.75 : 0.68
 
   return (
     <div
@@ -73,7 +79,7 @@ function LeafTile({ leaf, actionId, isCursor, isPending, isLatched, onTileTap }:
           RFD
         </div>
       )}
-      <div className="relative text-sm font-semibold uppercase tracking-widest text-stone-200">{leafDisplayName(leaf.id)}</div>
+      <div className="relative text-sm font-semibold uppercase tracking-widest text-stone-200">{leafDisplayName(id)}</div>
       {isUncensored && (
         <div className="relative mt-0.5 text-[9px] font-bold uppercase tracking-widest text-red-400">UNCENSORED</div>
       )}
@@ -83,23 +89,44 @@ function LeafTile({ leaf, actionId, isCursor, isPending, isLatched, onTileTap }:
   )
 }
 
-/** LEAVES — flip targets, rendered from mb.leaves (server roster, never
- *  hardcoded). Dailies first, then q38/q38h grouped and marked READY-FOR-DUTY,
- *  q38h additionally toned as uncensored (Ruling 7). */
-export function LeavesPage({ mb, cursor, pending, onTileTap, isLatched }: Props) {
-  const leaves = orderedLeaves(mb)
+/** LEAVES — flip targets, rendered from `commands.flip` (server roster,
+ *  NEVER a hardcoded list; empty on lifeline/bench hosts -> "monitoring
+ *  only"). Dailies first, then everything else grouped and marked
+ *  READY-FOR-DUTY, q38h additionally toned as uncensored (Ruling 7, still a
+ *  device-side theme convention, see shared.ts). */
+export function LeavesPage({ doc, cursor, pending, onTileTap, isLatched }: Props) {
+  const host: FleetHost | null = doc?.hosts.find((h) => h.id === 'fleet-host') ?? null
+  const leaves = orderedFlipTargets(host)
+  const loading = hostLoading(host)
+
+  if (leaves.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center">
+        <div className="text-lg font-semibold uppercase tracking-widest text-stone-600">MONITORING ONLY</div>
+        <div className="mt-1 text-xs text-stone-700">this host offers no flip targets</div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full flex-col">
+      {loading && (
+        <div className="shrink-0 pb-1 text-center text-[10px] uppercase tracking-widest text-amber-400">
+          FLIPPING — controls suppressed
+        </div>
+      )}
       <div
         className="flex-1"
         style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 8 }}
       >
-        {leaves.map((leaf, i) => {
-          const actionId = `mb.profile.${leaf.id}`
+        {leaves.map((id, i) => {
+          const actionId = `mb.profile.${id}`
           return (
             <LeafTile
-              key={leaf.id}
-              leaf={leaf}
+              key={id}
+              id={id}
+              active={id === host?.leaf?.name}
+              loading={loading}
               actionId={actionId}
               isCursor={cursor === i}
               isPending={pending === actionId}

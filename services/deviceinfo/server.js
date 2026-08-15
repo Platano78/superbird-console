@@ -250,7 +250,7 @@ async function readDevice() {
 }
 
 async function buildState() {
-  const [router, coder, queueCounts, obligations, disk, device, mbState] = await Promise.all([
+  const [router, coder, queueCounts, obligations, disk, device, mbState, fleetState] = await Promise.all([
     readFleetRouter(),
     readFleetCoder(),
     readQueueCounts(),
@@ -258,6 +258,7 @@ async function buildState() {
     readDisk(),
     readDevice(),
     mb.readMbState(),
+    mb.readFleetState(),
   ])
   const nowMs = Date.now()
   return {
@@ -266,11 +267,17 @@ async function buildState() {
     system: { disk },
     device,
     mb: mbState,
+    // fleet-state/1, re-exported VERBATIM from the fleet aggregator
+    // (http://localhost:8095/fleet-state.json) -- see
+    // fleet-aggregator/docs/fleet-state-contract.md. `fleet_state` is null with a
+    // `fleet_state_error` reason when the aggregator is unreachable or
+    // returns something that isn't a JSON object; this service never
+    // fabricates a document and never falls back to probing fleet-host
+    // directly. `serverNowMs` (a second clock alongside `ts`) is gone -- the
+    // contract carries per-probe `age_s`, which is strictly better.
+    fleet_state: fleetState.doc,
+    fleet_state_error: fleetState.error,
     ts: nowMs,
-    // Device has no synced clock (see the fleet-state contract §1) --
-    // `serverNowMs` is the explicit "anchor on this" field; `ts` stays for
-    // existing consumers. Same value, two names, one honest reason each.
-    serverNowMs: nowMs,
   }
 }
 
@@ -408,7 +415,11 @@ const CORS_HEADERS = {
 const JSON_HEADERS = { 'content-type': 'application/json', ...CORS_HEADERS }
 const MAX_ACTION_BODY_BYTES = 4096
 
-function readActionId(req) {
+/** Full request body for POST /action -- id plus the mb.* two-step confirm /
+ *  dry-run fields (docs/deviceinfo-protocol.md `POST /action`). The
+ *  buttons.json CONTROL grid path only reads `.id` off the result; the mb.*
+ *  path also reads `confirm_token` / `dry_run`. */
+function readActionBody(req) {
   return new Promise((resolve, reject) => {
     let body = ''
     req.on('data', (chunk) => {
@@ -418,7 +429,12 @@ function readActionId(req) {
     req.on('error', reject)
     req.on('end', () => {
       try {
-        resolve(JSON.parse(body || '{}').id)
+        const parsed = JSON.parse(body || '{}')
+        resolve({
+          id: parsed.id,
+          confirm_token: typeof parsed.confirm_token === 'string' ? parsed.confirm_token : undefined,
+          dry_run: parsed.dry_run === true,
+        })
       } catch {
         reject(new Error('invalid JSON body'))
       }
@@ -471,22 +487,26 @@ const server = http.createServer(async (req, res) => {
     return
   }
   if (req.method === 'POST' && req.url === '/action') {
-    let id
+    let id, confirm_token, dry_run
     try {
-      id = await readActionId(req)
+      ;({ id, confirm_token, dry_run } = await readActionBody(req))
     } catch (err) {
       res.writeHead(400, JSON_HEADERS)
       res.end(JSON.stringify({ error: String(err?.message ?? err) }))
       return
     }
     if (typeof id === 'string' && id.startsWith('mb.')) {
+      // Global kill-switch -- the SERVICE PROCESS's own environment, never
+      // the client's. `dry_run` in the request payload (handled inside
+      // mb.runMbAction) is the honest per-request mechanism; this env var
+      // stays as a coarser belt-and-suspenders knob.
       if (process.env.CARTHING_ACTION_DRYRUN === '1') {
-        logAction(id, null, 'DRYRUN (mb, not spawned)')
-        res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify({ id, dryRun: true })); return
+        logAction(id, null, 'DRYRUN (mb, env kill-switch, not spawned)')
+        res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify({ id, dry_run: true })); return
       }
-      const out = await mb.runMbAction(id)
+      const out = await mb.runMbAction(id, { confirm_token, dry_run })
       if (out.error) { logAction(id, null, `rejected(${out.error})`); res.writeHead(400, JSON_HEADERS); res.end(JSON.stringify({ error: out.error })); return }
-      res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify({ id })); return
+      res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify(out)); return
     }
     const resolved = await resolveAction(id)
     if (resolved.error) {
