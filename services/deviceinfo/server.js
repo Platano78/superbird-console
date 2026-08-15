@@ -2,7 +2,7 @@
 //
 // Plain Node, zero npm dependencies (node:http / node:fs / node:child_process
 // / global fetch only). Listens on 127.0.0.1:8791. Two endpoints:
-//   GET /state  -> { fleet, queue, system, ts }
+//   GET /state  -> { fleet, queue, system, device, mb, ts, serverNowMs }
 //   GET /health -> { ok: true }
 //
 // Every source below is independently wrapped in try/catch with a hard 2s
@@ -259,13 +259,18 @@ async function buildState() {
     readDevice(),
     mb.readMbState(),
   ])
+  const nowMs = Date.now()
   return {
     fleet: { router, coder },
     queue: { ...queueCounts, obligations },
     system: { disk },
     device,
     mb: mbState,
-    ts: Date.now(),
+    ts: nowMs,
+    // Device has no synced clock (see the fleet-state contract §1) --
+    // `serverNowMs` is the explicit "anchor on this" field; `ts` stays for
+    // existing consumers. Same value, two names, one honest reason each.
+    serverNowMs: nowMs,
   }
 }
 

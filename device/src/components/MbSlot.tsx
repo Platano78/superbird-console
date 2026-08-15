@@ -1,93 +1,78 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import type { MutableRefObject } from 'react'
 import { GaugeArc } from './GaugeArc'
 import type { DeviceInfoState } from '../deviceInfo'
-import { requestFastPoll } from '../deviceInfo'
+import { useConfirmArm } from './fleet/useConfirmArm'
+import { useFireLatch } from './fleet/useFireLatch'
+import { useFailureBanner } from './fleet/useFailureBanner'
+import { itemCountFor, resolveConfirmAction } from './fleet/shared'
+import { useFleetNav } from '../useFleetNav'
+import { SeatsPage } from './fleet/SeatsPage'
+import { LeavesPage } from './fleet/LeavesPage'
+import { AuxPage } from './fleet/AuxPage'
+import { ComposePage } from './fleet/ComposePage'
+import { FailureBanner } from './fleet/FailureBanner'
+import { PageTabs } from './fleet/PageTabs'
 
-// Icons are PLAIN RUNTIME STRINGS, resolved document-relative at render
-// time -- NOT ES-module asset imports (see ControlSlot.tsx:5-16 for why
-// an asset-URL import statement blank-screens this Chromium 69 kiosk).
-function iconUrl(file: string) {
-  return `./icons/${file}`
-}
+/** Imperative handoff to App.tsx's single useHardwareKeys call -- MbSlot owns
+ *  page/cursor/confirm state (it needs it for rendering anyway), and writes
+ *  fresh handlers into this ref on every render while mounted. App.tsx only
+ *  invokes them while slot 3 is the active slot -- see App.tsx's onNav/
+ *  onPage/onConfirm wrappers. */
+export type FleetNavHandlers = { onNav: (dir: 'up' | 'down') => void; onPage: () => void; onConfirm: () => void }
 
-// Absolute-fill layers for the art + scrim -- explicit top/right/bottom/left,
-// not `inset`, matching ControlSlot.tsx:228-232.
-const FILL_STYLE: CSSProperties = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }
+type Props = { info: DeviceInfoState | null; reachable: boolean; navHandlersRef: MutableRefObject<FleetNavHandlers | null> }
 
-const ACTION_URL = 'http://127.0.0.1:8791/action'
-const CONFIRM_TIMEOUT_MS = 4000
+/** Slot 3 -- the fleet view shell. Owns paging (SEATS default / LEAVES /
+ *  AUX) and renders the active page; the switching/unreachable branches and
+ *  the confirm-arming + lastResult error line are the surviving parts of the
+ *  old single-grid MbSlot. */
+export function MbSlot({ info, reachable, navHandlersRef }: Props) {
+  const mb = info?.mb ?? null
+  const switching = !!mb?.switching
 
-/** Local confirm-arming hook — mirrors ControlSlot.tsx:144-168 shape:
- * single `pending` id + single 4s timer. Purely about arm/timeout state. */
-function useConfirm() {
-  const [pending, setPending] = useState<string | null>(null)
-  const timer = useRef<number | null>(null)
+  const { pending, tap } = useConfirmArm()
+  // Feedback tier 1 (Ruling 13): instant visual latch on fire, independent
+  // of the poll -- see useFireLatch.ts.
+  const { fire, isLatched } = useFireLatch(mb)
+  // Feedback tier 3, on-screen half (Ruling 13): persistent, explicitly
+  // dismissible failure banner -- local-only dismiss, never touches the
+  // server's lastResult. See useFailureBanner.ts.
+  const { visible: bannerVisible, dismiss: dismissBanner } = useFailureBanner(mb?.lastResult ?? null)
 
-  useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current)
-  }, [])
-
-  const cancel = () => {
-    if (timer.current) window.clearTimeout(timer.current)
-    timer.current = null
-    setPending(null)
-  }
-
-  const tap = (id: string): boolean => {
-    if (pending === id) {
-      cancel()
-      return true
-    }
-    if (timer.current) window.clearTimeout(timer.current)
-    setPending(id)
-    timer.current = window.setTimeout(cancel, CONFIRM_TIMEOUT_MS)
-    return false
-  }
-
-  return { pending, tap, cancel }
-}
-
-type Props = { info: DeviceInfoState | null; reachable: boolean }
-
-const TILE_DEFS = [
-  { key: 'chat', label: 'CHAT', actionId: 'mb.profile.chat', icons: { active: 'icon_mb_chat_active.png', inactive: 'icon_mb_chat_inactive.png' } },
-  { key: 'prod', label: 'PROD', actionId: 'mb.profile.prod', icons: { active: 'icon_mb_prod_active.png', inactive: 'icon_mb_prod_inactive.png' } },
-  { key: 'pair', label: 'PAIR', actionId: 'mb.profile.pair', icons: { active: 'icon_mb_pair_active.png', inactive: 'icon_mb_pair_inactive.png' } },
-  // Display names are THEME, protocol ids are CONTRACT — leaf-deep stays leaf-deep on
-  // the wire (profile.sh leaf, action id); only the label wears the character.
-  { key: 'leaf-deep', label: 'LEAF-DEEP', actionId: 'mb.profile.leaf-deep', icons: { active: 'icon_mb_leaf-deep_active.png', inactive: 'icon_mb_leaf-deep_inactive.png' } },
-  { key: 'swarm', label: 'SWARM', actionId: 'mb.profile.swarm', icons: { active: 'icon_mb_swarm_active.png', inactive: 'icon_mb_swarm_inactive.png' } },
-  { key: 'herald', labelBase: 'SILVER SURFER', actionIdSum: 'mb.herald.summon', actionIdDismiss: 'mb.herald.dismiss', icons: { active: 'icon_mb_herald_active.png', inactive: 'icon_mb_herald_inactive.png' } },
-  { key: 'pcreate', labelBase: 'PCREATE', actionIdStart: 'mb.pcreate.start', actionIdStop: 'mb.pcreate.stop', icons: { active: 'icon_mb_pcreate_active.png', inactive: 'icon_mb_pcreate_inactive.png' } },
-]
-
-/** Display-only senior-seat occupancy label. Returns null for the 122B —
- *  that case is the HERALD badge's, which means "summon overlay active"
- *  (the SUMMON/DISMISS tile acts on it) and must not be diluted into
- *  "senior seat occupied" (owner ruling 2026-08-14). */
-function seniorShort(m: string | null): string | null {
-  if (!m || m.includes('Qwen3.5-122B')) return null
-  if (m.includes('gpt-oss-120b')) return '120B'
-  if (m.includes('DeepSeek-V4-Flash')) return 'LEAF-DEEP'
-  const base = m.split('/').pop() ?? m
-  return base.replace(/\.gguf$/, '').slice(0, 10).toUpperCase()
-}
-
-/** Fire an action: fast-poll then POST — fire-and-forget. */
-function fireAction(id: string) {
-  requestFastPoll()
-  void fetch(ACTION_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id }),
+  // The banner claims one extra cursor slot past a page's own items (its
+  // OWN highlight + dial-confirm dismiss, per the "cursor/confirm path"
+  // requirement) -- itemCount here and the pageBaseCount computed in
+  // onConfirm below must agree on that slot's index, so both call the same
+  // itemCountFor(page, mb).
+  const nav = useFleetNav({
+    itemCount: (page) => itemCountFor(page, mb) + (bannerVisible ? 1 : 0),
+    switching,
   })
-}
 
-/** Slot 3 -- fleet-host profile switcher. */
-export function MbSlot({ info, reachable }: Props) {
-  const { pending, tap } = useConfirm()
+  const onTileTap = (actionId: string) => {
+    if (tap(actionId)) fire(actionId)
+  }
 
-  if (!reachable || !info) {
+  // Written every render while mounted -- App.tsx only ever calls through
+  // this while activeSlot===3, so staleness after unmount is harmless.
+  navHandlersRef.current = {
+    onNav: nav.onNav,
+    onPage: nav.onPage,
+    onConfirm: () => {
+      if (switching || !mb) return
+      const cursor = nav.cursor ?? 0
+      const pageBaseCount = itemCountFor(nav.page, mb)
+      if (bannerVisible && cursor === pageBaseCount) {
+        dismissBanner()
+        return
+      }
+      const actionId = resolveConfirmAction(nav.page, cursor, mb)
+      if (!actionId) return
+      onTileTap(actionId)
+    },
+  }
+
+  if (!reachable || !info || !mb) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
         <GaugeArc value={null} tone="neutral" size={140} />
@@ -97,9 +82,7 @@ export function MbSlot({ info, reachable }: Props) {
     )
   }
 
-  const mb = info.mb
-
-  // Switching view — replaces the whole grid. MUST be checked BEFORE the
+  // Switching view — replaces the whole shell. MUST be checked BEFORE the
   // unreachable branch: mid-flip both fleet-host ports are down by design
   // (profile.sh stop_all), so reachable:false is the EXPECTED state of a
   // switch in progress — showing "unreachable" then would report a deliberate
@@ -124,101 +107,43 @@ export function MbSlot({ info, reachable }: Props) {
     )
   }
 
-  const currentProfile = mb.profile
-  // Header wears the same display name as the tile (leaf-deep renders LEAF-DEEP).
-  const profileLabel = currentProfile === 'leaf-deep' ? 'LEAF-DEEP' : currentProfile ? currentProfile.toUpperCase() : '--'
+  // The banner's own cursor slot sits one past the active page's own items
+  // -- see the itemCount/onConfirm comments above for why both must agree.
+  const pageBaseCount = itemCountFor(nav.page, mb)
+  const bannerIsCursor = bannerVisible && nav.cursor === pageBaseCount
 
   return (
     <div className="flex h-full flex-col" style={{ padding: '8px 12px' }}>
-      {/* Header strip */}
-      <div className="flex shrink-0 items-center justify-between">
-        <div className="text-3xl font-bold uppercase tracking-widest text-stone-50">{profileLabel}</div>
-        <div className="flex">
-          {seniorShort(mb.seniorModel) && (
-            <div className="ml-2 rounded bg-stone-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-stone-400">SR · {seniorShort(mb.seniorModel)}</div>
-          )}
-          {mb.herald && (
-            <div className="ml-2 rounded bg-stone-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-stone-400">HERALD</div>
-          )}
-          {mb.pcreate && (
-            <div className="ml-2 rounded bg-stone-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-stone-400">PCREATE</div>
-          )}
-        </div>
+      <PageTabs page={nav.page} goToPage={nav.goToPage} />
+      <div className="min-h-0 flex-1">
+        {nav.page === 'seats' && (
+          <SeatsPage
+            mb={mb}
+            serverNowMs={info.serverNowMs}
+            cursor={nav.cursor}
+            pending={pending}
+            onTileTap={onTileTap}
+            isLatched={isLatched}
+          />
+        )}
+        {nav.page === 'leaves' && (
+          <LeavesPage mb={mb} cursor={nav.cursor} pending={pending} onTileTap={onTileTap} isLatched={isLatched} />
+        )}
+        {nav.page === 'aux' && (
+          <AuxPage mb={mb} cursor={nav.cursor} pending={pending} onTileTap={onTileTap} isLatched={isLatched} />
+        )}
+        {nav.page === 'compose' && <ComposePage />}
       </div>
 
-      {/* Tile grid: 4 cols × 2 rows */}
-      <div className="flex-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
-        {TILE_DEFS.map((tile) => {
-          const isChat = tile.key === 'chat'
-          const isProd = tile.key === 'prod'
-          const isPair = tile.key === 'pair'
-          const isLeaf-deep = tile.key === 'leaf-deep'
-          const isSwarm = tile.key === 'swarm'
-          const isHerald = tile.key === 'herald'
-          const isPcreate = tile.key === 'pcreate'
-
-          const isActive = (isChat && currentProfile === 'chat')
-            || (isProd && currentProfile === 'prod')
-            || (isPair && currentProfile === 'pair')
-            || (isLeaf-deep && currentProfile === 'leaf-deep')
-            || (isSwarm && currentProfile === 'swarm')
-            || (isHerald && mb.herald)
-            || (isPcreate && mb.pcreate)
-
-          const actionId = isHerald
-            ? (mb.herald ? tile.actionIdDismiss! : tile.actionIdSum!)
-            : isPcreate
-              ? (mb.pcreate ? tile.actionIdStop! : tile.actionIdStart!)
-              : (tile as { actionId: string }).actionId
-
-          const displayLabel = isHerald
-            ? (mb.herald ? 'DISMISS' : 'SUMMON')
-            : isPcreate
-              ? (mb.pcreate ? 'STOP' : 'START')
-              : (tile as { label: string }).label
-
-          const isPending = pending === actionId
-          // Tone precedence pending > active > idle, mirroring ControlSlot's
-          // TONE_STYLE alphas -- border AND scrim alpha both follow it.
-          const borderCls = isPending ? 'border-amber-400' : isActive ? 'border-emerald-400' : 'border-stone-800'
-          const scrimAlpha = isPending ? 0.4 : isActive ? 0.45 : 0.68
-          const art = isActive ? tile.icons.active : tile.icons.inactive
-          // Only PROFILE tiles go inert when active (re-flipping to the current
-          // profile is a no-op). Herald/pcreate tiles stay tappable when active
-          // -- active IS the state where DISMISS/STOP must fire.
-          const isInert = isActive && !isHerald && !isPcreate
-
-          return (
-            <div
-              key={tile.key}
-              className={`relative flex flex-col items-center justify-center overflow-hidden border rounded ${borderCls} ${isInert ? 'cursor-default' : 'cursor-pointer'}`}
-              onClick={() => {
-                if (isInert) return
-                if (tap(actionId)) fireAction(actionId)
-              }}
-            >
-              <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
-              <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
-              {/* Verb tiles (herald/pcreate) show WHAT they are above WHAT a
-                  tap does — the verb alone left the tile identifiable only by
-                  its art (owner feedback: "what is START?"). */}
-              {(isHerald || isPcreate) && (
-                <div className="relative text-[10px] uppercase tracking-widest text-stone-400">{(tile as { labelBase: string }).labelBase}</div>
-              )}
-              <div className="relative text-sm font-semibold uppercase tracking-widest text-stone-200">{displayLabel}</div>
-              {isPending && (
-                <div className="relative mt-0.5 text-[10px] uppercase tracking-widest text-amber-400">TAP AGAIN</div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Error line */}
-      {mb.lastResult && !mb.lastResult.ok && (
-        <div className="shrink-0 border-t border-stone-800 pt-1 text-center text-[11px] text-red-400">
-          {mb.lastResult.id} failed: {mb.lastResult.error ?? 'unknown'}
-        </div>
+      {/* Feedback tier 3, on-screen half (Ruling 13): persistent until
+          explicitly dismissed -- survives a page change, never auto-clears. */}
+      {bannerVisible && mb.lastResult && (
+        <FailureBanner
+          id={mb.lastResult.id}
+          error={mb.lastResult.error}
+          isCursor={bannerIsCursor}
+          onDismiss={dismissBanner}
+        />
       )}
     </div>
   )

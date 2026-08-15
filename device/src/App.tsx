@@ -10,6 +10,7 @@ import { MbSlot } from './components/MbSlot'
 import { ControlSlot } from './components/ControlSlot'
 import { useHardwareKeys } from './useHardwareKeys'
 import { useDeviceInfo } from './deviceInfo'
+import type { FleetNavHandlers } from './components/MbSlot'
 
 const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0, lastAskBySession: {} }
 
@@ -24,6 +25,11 @@ export default function App() {
   // Fleet/queue/disk state for slots 2-3 — its own poll, entirely separate
   // from the daemon connection above.
   const deviceInfo = useDeviceInfo()
+  // MbSlot (slot 3) owns fleet page/cursor/confirm state and writes fresh
+  // handlers here every render while mounted -- see MbSlot.tsx. Read only
+  // from the activeSlot===3 guards below, so a dial/M press reaching a
+  // different slot can never silently drive a fleet-host action offscreen.
+  const fleetNavRef = useRef<FleetNavHandlers | null>(null)
 
   useEffect(() => {
     const d = (daemon.current = new Daemon())
@@ -74,6 +80,18 @@ export default function App() {
     onEscape: () => setOpenSessionId(null),
     activeSlot,
     onSlotChange,
+    // Fleet nav (dial/M) only ever drives slot 3 -- gated here, not just by
+    // MbSlot being unmounted, so a stale ref can never fire an action while
+    // a different slot is on screen.
+    onNav: (dir) => {
+      if (activeSlot === 3) fleetNavRef.current?.onNav(dir)
+    },
+    onPage: () => {
+      if (activeSlot === 3) fleetNavRef.current?.onPage()
+    },
+    onConfirm: () => {
+      if (activeSlot === 3) fleetNavRef.current?.onConfirm()
+    },
   })
 
   // Only lamps backed by real state: connection, and plan-limit pressure
@@ -114,7 +132,7 @@ export default function App() {
         ) : activeSlot === 2 ? (
           <FleetSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         ) : activeSlot === 3 ? (
-          <MbSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
+          <MbSlot info={deviceInfo.data} reachable={deviceInfo.reachable} navHandlersRef={fleetNavRef} />
         ) : (
           <ControlSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
         )}
