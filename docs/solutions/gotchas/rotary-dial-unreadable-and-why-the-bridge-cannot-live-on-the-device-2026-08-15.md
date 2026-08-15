@@ -69,13 +69,55 @@ nav hook).
 never the digits. Those answer permission prompts, and a bridge bug must never be able to
 synthesise a permission answer on a device that grants tool calls.
 
-## Still unverified (needs the device on the USB bus)
+## ✅ VERIFIED wire format (captured on hardware 2026-08-15)
 
-The rotary's **capability bitmap** — whether rotation is `EV_REL` (relative ticks) or `EV_KEY`
-(discrete detent keycodes) — and its `eventN` under the current boot. Only `Handlers=event1` /
-no-`kbd` is on the record. **Read a real two-direction rotation, not just the bitmap**: the
-button table was earned by agreeing two independent layers (kernel capability bitmap + a real
-press captured at both evdev and DOM level), and the decoder's shape depends on that answer.
+Both layers agree, the same discipline that produced the button table.
 
-Expect to lose ADB mid-session (documented intermittent USB dropoff) — work in short bursts and
-prefer one combined `reverse && push && shell` invocation over three that each lose the window.
+**Layer 1 — kernel capability bitmap** (`cat /proc/bus/input/devices`):
+```
+N: Name="rotary@0"
+H: Handlers=event1          ← no kbd: Chromium can never see it
+B: EV=5                     ← EV_SYN|EV_REL  (bit0|bit2). NO EV_KEY.
+B: REL=40                   ← 0x40 = bit 6 = REL_HWHEEL
+```
+
+**Layer 2 — a real two-direction rotation** (40 events / 20 detents, 16-byte `input_event`
+records, 32-bit `time_t`, little-endian):
+```
+ff 91 a4 54 | a9 23 0f 00 | 02 00 | 06 00 | 01 00 00 00
+tv_sec      | tv_usec     | type  | code  | value
+                            EV_REL  REL_HWHEEL  +1
+00 92 a4 54 | 96 7e 02 00 | 00 00 | 00 00 | 00 00 00 00   ← EV_SYN terminator
+```
+
+**The decoder spec, therefore:**
+- Read 16-byte records from `/dev/input/event1`.
+- Act only on `type == 2` (`EV_REL`) **and** `code == 6` (`REL_HWHEEL`); ignore the `EV_SYN`.
+- `value` is **always exactly ±1** — never 2, never accumulated (`ff ff ff ff` = −1, two's
+  complement). **One detent = one event.** No tick summing is needed; a debounce is optional
+  and only for fast spins, not for correctness.
+- Observed cadence: 80–250 ms between detents at human turning speed, no bursts.
+
+⚠ **Direction sign is probable, not proven.** The capture opened with `+1` while the owner was
+asked to turn clockwise first, so `+1` = clockwise / `−1` = counter-clockwise. The turn was
+back-and-forth and nobody watched the hand, so treat the sign as an integration-time detail to
+confirm on first use — it is a one-character fix, not a redesign.
+
+Suggested mapping: `+1` → `ArrowDown` (cursor forward), `−1` → `ArrowUp`.
+
+## Field notes (cost real time — don't re-pay)
+
+- 🔴 **Never background the reader inside `adb shell`.** `(timeout N dd ... &)` dies the moment
+  the `adb shell` command returns — the PTY session ends and the orphan takes SIGHUP. It leaves
+  a 0-byte file, which reads exactly like "the dial emits nothing." Keep the reader in the
+  FOREGROUND (or hold the shell open with `wait`).
+- 🔴 **Don't let a buffered writer be killed by `timeout`.** `timeout N hexdump -C /dev/input/eventN`
+  loses everything: hexdump buffers ~4KB, a handful of 16-byte events never fills it, and SIGTERM
+  discards the buffer unflushed. Prefer `dd ... of=<file> bs=16 count=N` so it exits on its own
+  and the bytes are already on disk.
+- **Always capture a control.** Recording `event0` (buttons) alongside `event1` is what
+  distinguishes "the dial is silent" from "my capture is broken" — both empty means the tooling
+  is at fault. That control is the only reason this was diagnosed instead of mis-reported.
+- The device's `/tmp` does not survive a reboot — decode in the same invocation that captures.
+- Expect to lose ADB mid-session (documented intermittent USB dropoff) — work in short bursts and
+  prefer one combined `reverse && push && shell` invocation over three that each lose the window.
