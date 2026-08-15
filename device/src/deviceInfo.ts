@@ -181,6 +181,14 @@ export type MbState = {
   lastResult: MbLastResult
   pcreate: MbPcreate
 }
+
+/** Seat-occupancy-only fallback, sourced by services/deviceinfo/mb.js
+ *  ONLY when `fleet_state` is null (the fleet-aggregator aggregator is unreachable) --
+ *  a SIBLING of `fleet_state`, never merged into it. `occupant` is the raw
+ *  `/v1/models` `models[0].name` string, verbatim -- no leaf/profile
+ *  inference (that stays fleet-aggregator's job alone, per fleet-state-contract.md). */
+export type FleetFallbackSeat = { id: string; port: number; up: boolean; occupant: string | null }
+export type FleetFallback = { probedAtMs: number; seats: FleetFallbackSeat[] } | null
 export type DeviceInfoState = {
   fleet: { router: RouterInfo; coder: CoderInfo }
   queue: QueueCounts
@@ -192,6 +200,9 @@ export type DeviceInfoState = {
    *  unreachable -- distinct from a reachable-but-empty document. */
   fleet_state: FleetStateDoc | null
   fleet_state_error?: string | null
+  /** null whenever fleet_state is present (happy path, zero probes issued);
+   *  non-null only while the aggregator is down. See FleetFallback above. */
+  fleet_fallback: FleetFallback
   ts: number
 }
 

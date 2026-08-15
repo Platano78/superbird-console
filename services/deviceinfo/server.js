@@ -260,6 +260,10 @@ async function buildState() {
     mb.readMbState(),
     mb.readFleetState(),
   ])
+  // Seat-occupancy-only fallback -- ONLY probes when fleetState.doc is null
+  // (aggregator down); readFleetFallback() itself is the gate, returning null
+  // with zero added probes on the happy path. Never merged into fleet_state.
+  const fleetFallback = await mb.readFleetFallback(fleetState.doc)
   const nowMs = Date.now()
   return {
     fleet: { router, coder },
@@ -277,6 +281,12 @@ async function buildState() {
     // contract carries per-probe `age_s`, which is strictly better.
     fleet_state: fleetState.doc,
     fleet_state_error: fleetState.error,
+    // Seat-occupancy-only fallback, a SIBLING of fleet_state -- NEVER merged
+    // into it and NEVER used to synthesize a FleetHost. null whenever
+    // fleet_state itself is present (happy path); non-null only while the
+    // aggregator is down, so a consumer can never mistake this degraded
+    // local probe for the contract document. See mb.readFleetFallback().
+    fleet_fallback: fleetFallback,
     ts: nowMs,
   }
 }
