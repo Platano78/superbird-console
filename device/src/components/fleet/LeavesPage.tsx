@@ -49,24 +49,27 @@ function LeafTile({ id, active, loading, actionId, isCursor, isPending, isLatche
   // too (contract field notes: never issue a flip into a loading seat).
   const isInert = active || loading
 
+  // The BORDER carries status only; the cursor is a RING (below). Keeping the
+  // two on one property made the cursor invisible on hardware: it sat below
+  // `active` in this chain, so resting on the active leaf -- where it starts --
+  // hid it completely, and border-stone-400 against border-stone-800 neighbours
+  // is nearly indistinguishable at idle backlight (60/255) anyway.
   const borderCls = isPending
     ? 'border-amber-400'
     : isLatched
       ? 'border-sky-400'
       : active
         ? 'border-emerald-400'
-        : isCursor
-          ? 'border-stone-400'
-          : isUncensored
-            ? 'border-red-800'
-            : 'border-stone-800'
+        : isUncensored
+          ? 'border-red-800'
+          : 'border-stone-800'
   const icons = LEAF_ICONS[id] ?? LEAF_ICONS.chat
   const art = active ? icons.active : icons.inactive
   const scrimAlpha = isPending ? 0.4 : active ? 0.45 : loading ? 0.75 : 0.68
 
   return (
     <div
-      className={`relative flex flex-col items-center justify-center overflow-hidden border-2 rounded ${borderCls} ${isInert ? 'cursor-default' : 'cursor-pointer'}`}
+      className={`relative flex flex-col items-center justify-center overflow-hidden border-2 rounded ${borderCls} ${isCursor ? 'ring-2 ring-white' : ''} ${isInert ? 'cursor-default' : 'cursor-pointer'}`}
       onClick={() => {
         if (isInert) return
         onTileTap(actionId)

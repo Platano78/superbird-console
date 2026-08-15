@@ -112,11 +112,13 @@ function SeniorSeatTile({
 }) {
   const tone = seatTone(seat)
   const actionId = herald ? 'mb.herald.dismiss' : 'mb.herald.summon'
-  const borderCls = isPending ? 'border-amber-400' : isLatched ? 'border-sky-400' : isCursor ? 'border-stone-400' : tone.border
+  // Border = status, ring = cursor position. See the LeavesPage note: sharing
+  // one property made the cursor invisible on hardware.
+  const borderCls = isPending ? 'border-amber-400' : isLatched ? 'border-sky-400' : tone.border
 
   return (
     <div
-      className={`relative flex cursor-pointer flex-col items-center justify-center border-2 rounded ${borderCls}`}
+      className={`relative flex cursor-pointer flex-col items-center justify-center border-2 rounded ${borderCls} ${isCursor ? 'ring-2 ring-white' : ''}`}
       onClick={() => onTileTap(actionId)}
     >
       <div className={`text-xs uppercase tracking-widest ${tone.label}`}>
