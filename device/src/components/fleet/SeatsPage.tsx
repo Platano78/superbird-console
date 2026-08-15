@@ -208,10 +208,19 @@ export function SeatsPage({ doc, cursor, pending, onTileTap, isLatched }: Props)
         )}
       </div>
 
+      {/* ⚠ Spacing below is per-child `marginLeft`, NOT flex `gap`. Flex gap
+          landed in Chrome 84; this kiosk is Chromium 69, where it renders as
+          ZERO spacing with no error. Grid gap (Chrome 57+) is fine and is what
+          every other container here uses — this row is flex, so it cannot.
+          Note the gate trap: grepping for `gap-` only catches the Tailwind
+          class form and silently passes an inline style gap like the one this
+          replaced. Grep bare `gap` and check grid-vs-flex on every hit. */}
       {others.length > 0 && (
-        <div className="mt-2 flex shrink-0 items-center justify-center" style={{ gap: 8 }}>
-          {others.map((h) => (
-            <SecondaryHostChip key={h.id} host={h} />
+        <div className="mt-2 flex shrink-0 items-center justify-center">
+          {others.map((h, i) => (
+            <div key={h.id} style={i === 0 ? undefined : { marginLeft: 8 }}>
+              <SecondaryHostChip host={h} />
+            </div>
           ))}
         </div>
       )}
