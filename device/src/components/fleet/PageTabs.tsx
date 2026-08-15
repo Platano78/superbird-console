@@ -16,7 +16,11 @@ type Props = {
   goToPage: (page: FleetPage) => void
 }
 
-/** Always-visible touch page control (Ruling 1/2/4) -- three short labels,
+/** Always-visible touch page control (Ruling 1/2/4) -- one short label per
+ *  page in FLEET_PAGES (LABEL is a Record<FleetPage,_>, so a new page fails
+ *  the build until it gets one -- that exhaustiveness is what keeps every
+ *  page reachable by touch alone, which matters because the dial's rotation
+ *  is NOT readable by the app),
  *  the active one highlighted. Direct selection, not cycle-through: fewer
  *  taps than mirroring KeyM's cycle. Kept to a single row of small text so
  *  it stays well under the ~24px budget. */
