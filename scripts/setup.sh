@@ -17,9 +17,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# ⚠ Deliberately NOT ".env" in this repo's own working tree while it's being
-# authored -- see superbird.conf.example's header comment. The path this script writes
-# to, once renamed, is exactly "$REPO_ROOT/superbird.conf".
+# Deliberately not the conventional dotenv name -- see .gitignore for why, and
+# superbird.conf.example for what goes in it.
 ENV_FILE="$REPO_ROOT/superbird.conf"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 

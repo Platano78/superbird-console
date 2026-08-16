@@ -13,6 +13,13 @@ All notable changes to this project are documented here.
   `MB_HOST`/`CODER_HOST` already behave. Neither block is rendered by the device app today, so
   leaving both unset costs nothing; set them in `superbird.conf` to restore the old behaviour.
 
+### Fixed
+- **`superbird.conf.example` told you to copy it to the wrong filename.** Its header still
+  described an abandoned plan — rename the template before publishing, copy it to a dotenv
+  file — so anyone following it would create a config nothing loads. The config is
+  `superbird.conf`, as `.gitignore`, `INSTALL.md` and `setup.sh` all already said. `setup.sh`
+  carried the same stale "once renamed" note.
+
 ## [0.4.0] - 2026-08-16
 
 ### Added

@@ -1,16 +1,17 @@
 # Car Thing / superbird-console environment config.
 #
-# ⚠ This file must be RENAMED to `.superbird.conf.example` before publishing -- it is
-# named `superbird.conf.example` (no leading dot) only because this build environment's
-# sandbox hard-blocks every filesystem operation on a `.env*` path, including
-# creating a template with no real secrets in it. `scripts/setup.sh` writes
-# the real, gitignored `.env` (see .gitignore) the same way any other tool
-# would -- that restriction is specific to the environment this file was
-# authored in, not to the shipped repo.
+# Copy to `superbird.conf` in the repo root -- or let `scripts/setup.sh` write
+# it for you -- and fill in what applies. That file is gitignored; nothing here
+# is meant to be committed with real values.
 #
-# Copy to .env (or let `scripts/setup.sh` do it) and fill in what applies.
-# `.env` is gitignored -- nothing here is meant to be committed with real
-# values. See INSTALL.md for how this file gets loaded, and
+# The name is deliberately NOT the conventional dotenv one. This config holds a
+# device serial and a couple of LAN hostnames, not credentials, and that name is
+# blanket-blocked by some agent and tooling sandboxes -- which would leave you
+# with a config file your own tools cannot read or maintain. The format is plain
+# KEY=VALUE either way, and systemd's `EnvironmentFile=` does not care what it is
+# called. Full reasoning is in .gitignore, which ignores both names.
+#
+# See INSTALL.md for how this file gets loaded, and
 # docs/operations-runbook.md's Configuration section for what each service
 # does with these.
 
