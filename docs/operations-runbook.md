@@ -39,8 +39,9 @@ detects/writes them. Summary:
 | `CONTROL_SCRIPTS_DIR` | Optional | Directory holding your own fleet-control scripts, substituted into `buttons.json`'s `${CONTROL_SCRIPTS_DIR}` tokens (see below). Unset = those CONTROL buttons fail per-press with ENOENT. |
 
 `scripts/setup.sh` writes these into `superbird.conf` (gitignored) at the repo root; each systemd unit
-loads it via `EnvironmentFile=-%h/project/car-thing/superbird.conf` (the leading `-` tolerates a missing
-file). Running a script directly from a shell instead, just export the vars first.
+loads it via `EnvironmentFile=` pointing at this checkout (the leading `-` tolerates a missing
+file). The units in the repo are templates: `scripts/setup.sh` substitutes this checkout's path and
+your `node` binary as it installs them, so nothing assumes a directory layout. Running a script directly from a shell instead, just export the vars first.
 `services/deviceinfo/server.js`'s `QUEUE_ROOT`/`OBLIGATIONS_SCRIPT` are derived from the
 service's own file location rather than a var — they point at sibling projects
 (`piplay/pi-harness`, `_standards/obligations`) in the same workspace and simply report
@@ -371,5 +372,5 @@ dashboard — only earns its keep on sessions that ask.
 - **`claude.question.answer` is UNVERIFIED.** Upstream answers questions by typing into the focused
   terminal via macOS Accessibility APIs; no Windows equivalent ships. Wiring is correct and it now
   fails visibly rather than silently, but it has never been seen to succeed.
-- The device drops off USB periodically; `car-thing-adb.service` recovers the tunnel, but ADB
+- The device drops off USB periodically; `scripts/keep-adb-reverse.sh` recovers the tunnel, but ADB
   itself needs the device present.
