@@ -277,7 +277,7 @@ async function readDevice() {
 }
 
 async function buildState() {
-  const [router, coder, queueCounts, obligations, disk, device, mbState, fleetState] = await Promise.all([
+  const [router, coder, queueCounts, obligations, disk, device, mbState, fleetState, compose] = await Promise.all([
     readFleetRouter(),
     readFleetCoder(),
     readQueueCounts(),
@@ -286,6 +286,7 @@ async function buildState() {
     readDevice(),
     mb.readMbState(),
     mb.readFleetState(),
+    mb.readComposeState(),
   ])
   // Seat-occupancy-only fallback -- ONLY probes when fleetState.doc is null
   // (aggregator down); readFleetFallback() itself is the gate, returning null
@@ -306,6 +307,12 @@ async function buildState() {
     // fabricates a document and never falls back to probing the fleet host
     // directly. `serverNowMs` (a second clock alongside `ts`) is gone -- the
     // contract carries per-probe `age_s`, which is strictly better.
+    // COMPOSE (Phase D) -- controller-owned, like mb.* above and for the same
+    // reason: fleet-state/1 models seats and leaves, and an ad-hoc combination
+    // is neither. The roster is the HOST's own model table, cached rather than
+    // polled; unset ssh config reports configured:false, never an empty roster
+    // that would read as "a host with no models".
+    compose,
     fleet_state: fleetState.doc,
     fleet_state_error: fleetState.error,
     // Seat-occupancy-only fallback, a SIBLING of fleet_state -- NEVER merged
@@ -480,6 +487,9 @@ function readActionBody(req) {
           id: parsed.id,
           confirm_token: typeof parsed.confirm_token === 'string' ? parsed.confirm_token : undefined,
           dry_run: parsed.dry_run === true,
+          // mb.compose.* only -- validated field-by-field against the host's
+          // own roster in mb.validateSelection before any ssh is spawned.
+          selection: Array.isArray(parsed.selection) ? parsed.selection : undefined,
         })
       } catch {
         reject(new Error('invalid JSON body'))
@@ -533,13 +543,22 @@ const server = http.createServer(async (req, res) => {
     return
   }
   if (req.method === 'POST' && req.url === '/action') {
-    let id, confirm_token, dry_run
+    let id, confirm_token, dry_run, selection
     try {
-      ;({ id, confirm_token, dry_run } = await readActionBody(req))
+      ;({ id, confirm_token, dry_run, selection } = await readActionBody(req))
     } catch (err) {
       res.writeHead(400, JSON_HEADERS)
       res.end(JSON.stringify({ error: String(err?.message ?? err) }))
       return
+    }
+    if (typeof id === 'string' && id.startsWith('mb.compose.')) {
+      if (process.env.CARTHING_ACTION_DRYRUN === '1') {
+        logAction(id, null, 'DRYRUN (compose, env kill-switch, not spawned)')
+        res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify({ id, dry_run: true })); return
+      }
+      const out = await mb.runComposeAction(id, { confirm_token, dry_run, selection })
+      if (out.error) { logAction(id, null, `rejected(${out.error})`); res.writeHead(400, JSON_HEADERS); res.end(JSON.stringify({ error: out.error })); return }
+      res.writeHead(202, JSON_HEADERS); res.end(JSON.stringify(out)); return
     }
     if (typeof id === 'string' && id.startsWith('mb.')) {
       // Global kill-switch -- the SERVICE PROCESS's own environment, never

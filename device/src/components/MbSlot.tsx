@@ -174,7 +174,7 @@ export function MbSlot({ info, reachable, navHandlersRef }: Props) {
           <AuxPage doc={doc} pcreate={mb.pcreate} cursor={nav.cursor} pending={pending} onTileTap={onTileTap} isLatched={isLatched} />
         )}
         {nav.page === 'thermals' && <ThermalsPage doc={doc} />}
-        {nav.page === 'compose' && <ComposePage />}
+        {nav.page === 'compose' && <ComposePage compose={info?.compose} />}
       </div>
 
       {/* Feedback tier 3, on-screen half (Ruling 13): persistent until

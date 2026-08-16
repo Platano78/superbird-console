@@ -177,6 +177,41 @@ export type FleetStateDoc = {
 // producer-side truth and re-derives no leaf-inference logic; it's simply a
 // service the schema doesn't cover. See services/deviceinfo/mb.js.
 export type MbPcreate = { up: boolean; port: number; probedAtMs: number }
+
+/** COMPOSE (Phase D) -- the host's own model table, re-exported by the
+ *  deviceinfo service from `compose.sh roster`. Controller-owned like
+ *  MbPcreate above: fleet-state/1 models seats and leaves, and an ad-hoc
+ *  operator-chosen combination is neither, so there is no producer-side truth
+ *  being duplicated here. `configured:false` means MB_SSH_HOST is unset --
+ *  render that as "not configured", never as a host with an empty roster. */
+export type ComposeModel = {
+  key: string
+  class: string
+  present: boolean
+  default_ctx: number
+  max_ctx: number
+  size_bytes: number
+}
+/** `kind` is the launcher's own verdict, carried through verbatim: a refusal
+ *  (nothing started) and a gate failure (started, never came up) are different
+ *  facts and are rendered differently. */
+export type ComposeResult = {
+  verb: string
+  ok: boolean
+  kind: 'ok' | 'refused' | 'gate-failure' | 'transport'
+  detail: string
+  launched: unknown[]
+  recovery: string | null
+  at: number
+}
+export type ComposeState = {
+  configured: boolean
+  roster: ComposeModel[] | null
+  rosterError: string | null
+  rosterAgeMs: number | null
+  lastResult: ComposeResult | null
+  ports: number[]
+}
 export type MbState = {
   switching: MbSwitching
   lastResult: MbLastResult
@@ -208,6 +243,8 @@ export type DeviceInfoState = {
   /** null whenever fleet_state is present (happy path, zero probes issued);
    *  non-null only while the aggregator is down. See FleetFallback above. */
   fleet_fallback: FleetFallback
+  /** COMPOSE (Phase D). Controller-owned; see ComposeState above. */
+  compose?: ComposeState
   ts: number
 }
 

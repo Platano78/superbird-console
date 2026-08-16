@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.0] - 2026-08-16
+
+### Added
+- **COMPOSE (Phase D)** — launch an operator-chosen combination of models on the fleet host,
+  outside the fixed leaf roster. The page lists the host's own model roster (class, context,
+  whether the file is present), assigns ports to a selection, and offers DRYRUN / LAUNCH / STOP.
+  A refusal (the launcher declined, nothing started) and a gate failure (something started and
+  never came up) are rendered as different facts in different colours.
+  The page is touch-driven; dial/cursor navigation is not wired yet.
+- The device-info service gained a `compose` block in `/state` (host roster, cached rather than
+  polled) and an `mb.compose.*` action family.
+
+### Fixed
+- 🔴 **Fleet-view actions never actually ran.** The `mb.*` two-step confirm was added
+  server-side in v0.2.0 — POST #1 returns a single-use token and executes nothing, POST #2 runs
+  it — but the device only ever sent POST #1. Every leaf flip, herald summon and pcreate toggle
+  fired from the fleet view was a silent no-op, while the tile latched to "committed" and looked
+  like it had worked. `fireAction` now completes both posts.
+
+### Security
+- `mb.compose.*` is the only action family whose command is parameterised by device input, so it
+  cannot use the fixed allowlist that protects the others. Every selection is validated against
+  the roster the **host itself** reported: model keys must exist there and be present, ports come
+  from a literal set, context must fit that model's maximum, plus a charset assertion on each key.
+  Anything failing is refused before ssh is spawned.
+
 ## [0.2.0] - 2026-08-16
 
 First public release. The project existed privately before this; the version reflects the

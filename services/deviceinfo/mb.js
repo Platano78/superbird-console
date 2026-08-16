@@ -68,7 +68,206 @@ module.exports = {
   readFleetState,
   readFleetFallback,
   runMbAction,
+  readComposeState,
+  runComposeAction,
   __testCompletion: (port) => probeCompletion(port),
+}
+
+// ---------------------------------------------------------------------------
+// COMPOSE (Phase D) -- ad-hoc operator-chosen model combinations.
+//
+// This is the one action family whose command is PARAMETERISED by device
+// input, so it cannot use the fixed ACTION_ALLOWLIST that protects every other
+// mb.* verb. The containment law here is equivalence, not a literal map:
+//   - model keys must appear in the roster the HOST itself reported, and be
+//     present:true. Device input selects from the host's list, it never names
+//     a model the host did not offer.
+//   - ports come from a literal set; ctx must be a positive integer <= the
+//     roster's max_ctx for that key.
+//   - a belt-and-braces charset assertion on every key, so nothing that could
+//     survive as a shell metacharacter reaches the ssh command string.
+// Anything failing validation is refused BEFORE ssh is spawned.
+//
+// Verb contract (the fleet host's scripts/compose.sh): NDJSON on stdout,
+// exit 0 ok / 2 refused (nothing launched) / 3 launch-or-gate failure. Those
+// three are rendered differently on the device -- a refusal is the launcher
+// correctly declining, a gate failure means something was started and did not
+// come up. Collapsing them would be the dishonesty this codebase keeps
+// refusing.
+const COMPOSE_PORTS = [8080, 8081, 8082, 8083]
+const COMPOSE_ROSTER_TTL_MS = 10 * 60 * 1000
+const COMPOSE_KEY_RE = /^[A-Za-z0-9._-]+$/
+let composeRoster = null          // { models: [...], fetchedAtMs }
+let composeRosterError = null
+let composeLastResult = null      // { verb, ok, kind, detail, launched, at }
+
+/** Run a compose verb over ssh and return parsed NDJSON events. Never throws;
+ *  a transport failure is reported as an event-less result with the stderr
+ *  text, which the caller renders rather than swallowing. */
+function composeExec(args, timeoutMs = 300000) {
+  return new Promise((resolve) => {
+    const argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', MB_SSH_HOST, `cd ~ && ./compose.sh ${args}`]
+    execFile('ssh', argv, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const events = String(stdout || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => { try { return JSON.parse(l) } catch { return null } })
+        .filter(Boolean)
+      // execFile surfaces a non-zero exit as `err.code`; compose.sh uses 2 and
+      // 3 as MEANINGFUL exits, not failures, so they are not errors here.
+      const code = err && typeof err.code === 'number' ? err.code : err ? -1 : 0
+      resolve({ code, events, stderr: String(stderr || '').trim() })
+    })
+  })
+}
+
+/** Roster is a static model table on the host -- cached, not polled. Refreshed
+ *  lazily on TTL so opening the COMPOSE page does not cost an ssh per /state. */
+async function refreshComposeRoster(force = false) {
+  if (!MB_SSH_HOST) return
+  const fresh = composeRoster && Date.now() - composeRoster.fetchedAtMs < COMPOSE_ROSTER_TTL_MS
+  if (fresh && !force) return
+  const { code, events, stderr } = await composeExec('roster', 30000)
+  const row = events.find((e) => e && e.event === 'roster')
+  if (row && Array.isArray(row.models)) {
+    composeRoster = { models: row.models, fetchedAtMs: Date.now() }
+    composeRosterError = null
+  } else {
+    composeRosterError = stderr || `compose.sh roster returned no roster event (exit ${code})`
+  }
+}
+
+/**
+ * readComposeState() → Promise<object>, NEVER throws/rejects.
+ * Unset MB_SSH_HOST = the feature is off; report unconfigured rather than
+ * empty, so the device says "not configured" instead of drawing an empty
+ * roster that looks like a host with no models.
+ */
+async function readComposeState() {
+  if (!MB_HOST || !MB_SSH_HOST) {
+    return { configured: false, roster: null, rosterError: null, rosterAgeMs: null, lastResult: composeLastResult, ports: COMPOSE_PORTS }
+  }
+  await refreshComposeRoster().catch(() => {})
+  return {
+    configured: true,
+    roster: composeRoster ? composeRoster.models : null,
+    rosterError: composeRosterError,
+    rosterAgeMs: composeRoster ? Date.now() - composeRoster.fetchedAtMs : null,
+    lastResult: composeLastResult,
+    ports: COMPOSE_PORTS,
+  }
+}
+
+/** Turn device-chosen {port,key,ctx} items into `port:key:ctx` triples, or an
+ *  error. Every field is checked against the HOST's own roster -- this is the
+ *  trust boundary for the one mb.* family whose command is parameterised. */
+function validateSelection(selection) {
+  if (!Array.isArray(selection) || selection.length === 0) return { error: 'selection must be a non-empty array of {port, key, ctx}' }
+  if (selection.length > COMPOSE_PORTS.length) return { error: `at most ${COMPOSE_PORTS.length} models can be composed` }
+  if (!composeRoster) return { error: 'host roster not loaded yet -- cannot validate a selection against it' }
+  const seenPorts = new Set()
+  const triples = []
+  for (const item of selection) {
+    const key = item && item.key
+    const port = item && item.port
+    const ctx = item && item.ctx
+    if (typeof key !== 'string' || !COMPOSE_KEY_RE.test(key)) return { error: `invalid model key: ${JSON.stringify(key)}` }
+    const model = composeRoster.models.find((m) => m && m.key === key)
+    if (!model) return { error: `model not offered by the host roster: ${key}` }
+    if (model.present === false) return { error: `model file not present on host: ${key}` }
+    if (!COMPOSE_PORTS.includes(port)) return { error: `port not allowed: ${JSON.stringify(port)}` }
+    if (seenPorts.has(port)) return { error: `port assigned twice: ${port}` }
+    seenPorts.add(port)
+    if (!Number.isInteger(ctx) || ctx <= 0) return { error: `ctx must be a positive integer, got ${JSON.stringify(ctx)}` }
+    if (Number.isInteger(model.max_ctx) && ctx > model.max_ctx) return { error: `ctx ${ctx} exceeds max_ctx ${model.max_ctx} for ${key}` }
+    triples.push(`${port}:${key}:${ctx}`)
+  }
+  return { triples }
+}
+
+/** Classify a compose run by its EXIT CODE, which is the launcher's own verdict.
+ *  0 ok · 2 refused (nothing started) · 3 launch/gate failure (something was
+ *  started and did not come up) · anything else is transport. Kept distinct on
+ *  purpose: "the launcher declined" and "it tried and failed" are different
+ *  facts for whoever is standing at the device. */
+function classifyCompose(verb, code, events, stderr) {
+  const result = events.find((e) => e && e.event === 'result') || null
+  const refused = events.find((e) => e && e.event === 'refused') || null
+  const steps = events.filter((e) => e && e.event === 'step')
+  if (code === 2 || refused) {
+    return { verb, ok: false, kind: 'refused', detail: refused ? `${refused.reason} (${refused.law})` : stderr || 'refused', launched: [], recovery: null, at: Date.now() }
+  }
+  if (code === 3 || (result && result.ok === false)) {
+    const f = result && result.failed
+    return { verb, ok: false, kind: 'gate-failure', detail: f ? `port ${f.port} ${f.phase}: ${f.detail}` : stderr || 'launch failed', launched: (result && result.launched) || [], recovery: (result && result.recovery) || null, at: Date.now() }
+  }
+  if (code !== 0) {
+    return { verb, ok: false, kind: 'transport', detail: stderr || `ssh/compose.sh exited ${code}`, launched: [], recovery: null, at: Date.now() }
+  }
+  return { verb, ok: true, kind: 'ok', detail: (result && result.note) || `${steps.length} step(s) ok`, launched: (result && result.launched) || [], recovery: null, at: Date.now() }
+}
+
+/**
+ * runComposeAction(id, opts) -- `mb.compose.dryrun` | `.launch` | `.stop`.
+ * dryrun is non-mutating by the launcher's own contract ("nothing started"),
+ * so it runs inline and needs no confirm. launch and stop mutate the fleet and
+ * take the same two-step confirm as every other mb.* action.
+ */
+async function runComposeAction(id, opts = {}) {
+  if (!MB_HOST || !MB_SSH_HOST) return { error: 'fleet not configured (set MB_HOST and MB_SSH_HOST)' }
+  const VERBS = { 'mb.compose.dryrun': 'dryrun', 'mb.compose.launch': 'launch', 'mb.compose.stop': 'stop' }
+  const verb = VERBS[id]
+  if (!verb) return { error: `unknown action id: ${id}` }
+  if (switching) return { error: `switch in progress: ${switching.id}` }
+
+  let args = verb
+  if (verb !== 'stop') {
+    await refreshComposeRoster().catch(() => {})
+    const v = validateSelection(opts.selection)
+    if (v.error) return { error: v.error }
+    args = `${verb} ${v.triples.join(' ')}`
+  }
+  const would = { id, verb, cmd: `./compose.sh ${args}` }
+
+  if (opts.dry_run === true) {
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=DRYRUN-payload (not spawned)`)
+    return { id, verb, dry_run: true, would }
+  }
+
+  if (verb === 'dryrun') {
+    const { code, events, stderr } = await composeExec(args, 60000)
+    composeLastResult = classifyCompose(verb, code, events, stderr)
+    const plan = events.find((e) => e && e.event === 'plan') || null
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=${code} kind=${composeLastResult.kind}`)
+    return { id, verb, plan, result: composeLastResult }
+  }
+
+  if (!opts.confirm_token) {
+    const token = issueConfirmToken(id)
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=confirm-issued (not spawned)`)
+    return { id, verb, confirm_token: token, expires_in_s: CONFIRM_TOKEN_TTL_MS / 1000, would }
+  }
+  const check = validateConfirmToken(id, opts.confirm_token)
+  if (!check.ok) {
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=confirm-rejected(${check.reason})`)
+    return { error: `confirm_token rejected: ${check.reason}` }
+  }
+  pendingConfirm.used = true
+
+  // Each model must reach health 200 AND return a real completion before
+  // compose.sh calls it launched, so a multi-model launch is minutes, not
+  // seconds. The device draws progress against this budget.
+  const budgetMs = verb === 'stop' ? 60000 : 300000
+  switching = { id, target: verb, phase: 'launch', startedAt: Date.now(), budgetMs }
+  composeExec(args, budgetMs + 30000).then(({ code, events, stderr }) => {
+    composeLastResult = classifyCompose(verb, code, events, stderr)
+    console.log(`[action] ${new Date().toISOString()} id=${id} exit=${code} kind=${composeLastResult.kind} detail=${composeLastResult.detail}`)
+  }).catch((err) => {
+    composeLastResult = { verb, ok: false, kind: 'transport', detail: String(err?.message ?? err), launched: [], recovery: null, at: Date.now() }
+  }).finally(() => { switching = null })
+
+  return { id, verb }
 }
 
 /**
