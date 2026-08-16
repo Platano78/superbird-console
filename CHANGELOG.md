@@ -15,6 +15,16 @@ All notable changes to this project are documented here.
   busy seat would be a silent lie that nobody would notice, unlike a wrong status pill. A stale
   reading renders nothing too, since a stale "busy" is only a claim about the past.
 
+### Fixed
+- 🔴 **A CONTROL tile could not light for the model that was actually loaded.** The router
+  renamed a preset and `buttons.json` still carried the old id, so the tile matched nothing —
+  while the status line above it printed the router's own string correctly, which is what made
+  it look like a rendering bug rather than a config one. The id is corrected, and the grid now
+  uses the roster the service was already sending: a tile naming a preset the router does not
+  have renders as `NO PRESET` and is inert, instead of looking exactly like a live model that
+  simply is not running. Matching stays exact — a fuzzy match would light the wrong tile, which
+  is worse than lighting none.
+
 ## [0.3.0] - 2026-08-16
 
 ### Added
