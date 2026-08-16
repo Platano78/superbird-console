@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DeviceBlock, DeviceInfoState } from '../deviceInfo'
 import { requestFastPoll } from '../deviceInfo'
+import { DEMO_FORCED, isDemoActive } from '../demo/demoMode'
+import { DEMO_BUTTONS } from '../demo/fixtures.buttons'
+import { inertAction } from '../demo/inert'
 
 // Icons are PLAIN RUNTIME STRINGS, resolved document-relative at render
 // time (`./icons/<file>` -> `iconUrl()` below) -- NOT ES-module asset
@@ -42,7 +45,7 @@ const OPTIMISTIC_GIVEUP_MS = 45000
  * The service strips `argv`/`stopArgv` before sending this; the device
  * only ever holds an opaque id, never the command behind it.
  */
-type ButtonConfig = {
+export type ButtonConfig = {
   id: string
   displayName: string
   subLabel?: string
@@ -60,6 +63,9 @@ type ButtonConfig = {
 function useButtonsConfig() {
   const [buttons, setButtons] = useState<ButtonConfig[] | null>(null)
   useEffect(() => {
+    // 🔴 DEMO GUARD: forced demo issues no /config request either; the
+    // caller substitutes DEMO_BUTTONS below.
+    if (DEMO_FORCED) return
     let cancelled = false
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), CONFIG_FETCH_TIMEOUT_MS)
@@ -106,6 +112,9 @@ const ACTION_COOLDOWN_MS = 8000
  *  and an empty catch swallowed the resulting 400 with no UI feedback at
  *  all. One string, one meaning now. */
 function postAction(id: string, onFail?: () => void) {
+  // 🔴 DEMO GUARD (ruling 4): nothing is posted in demo mode. Returns before
+  // the cooldown set is touched, so demo taps leave no state behind at all.
+  if (inertAction(id)) return
   if (recentlyFired.has(id)) return
   recentlyFired.add(id)
   window.setTimeout(() => recentlyFired.delete(id), ACTION_COOLDOWN_MS)
@@ -623,7 +632,10 @@ type Props = { info: DeviceInfoState | null; reachable: boolean }
  *  loaded (green) / error (red, transient) / confirm (amber, local
  *  tap-arm) -- see TONE_STYLE above. */
 export function ControlSlot({ info, reachable }: Props) {
-  const buttons = useButtonsConfig()
+  const fetchedButtons = useButtonsConfig()
+  // Demo swaps the CONFIG SOURCE, exactly like the other data sources -- the
+  // grid below renders demo buttons through the identical ButtonConfig path.
+  const buttons = isDemoActive() ? DEMO_BUTTONS : fetchedButtons
   const { errorId, flash } = useTransientError()
   const { pending, tap, cancel } = useConfirm()
   const { optimistic, start: startOptimistic, clear: clearOptimistic } = useOptimisticLoad()

@@ -24,13 +24,18 @@
 
 import { spawn } from 'node:child_process'
 
-// ADB must be the WINDOWS binary — see scripts/keep-adb-reverse.sh.
-const ADB = process.env.CAR_THING_ADB || '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
-// ⚠ ALWAYS address the Car Thing by serial. A bare `adb shell`/`adb forward`
-// fails outright the moment any second device is attached — see
-// scripts/backlight-daemon.mjs header, took production down 2026-08-02.
-const SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
-const ADB_ARGS = ['-s', SERIAL]
+// ADB path: on WSL this must be the WINDOWS binary — see
+// scripts/keep-adb-reverse.sh. Generic 'adb' default covers a plain Linux
+// host with adb already on PATH; scripts/setup.sh auto-detects the WSL case.
+const ADB = process.env.CAR_THING_ADB || 'adb'
+// ⚠ ALWAYS address the Car Thing by serial once a second device can ever be
+// attached. A bare `adb shell`/`adb forward` fails outright the moment any
+// second device is attached — see scripts/backlight-daemon.mjs header, took
+// production down 2026-08-02. Unset is fine for the common single-device
+// case (below omits `-s` entirely); scripts/setup.sh auto-detects a serial
+// when there's exactly one device to disambiguate from.
+const SERIAL = process.env.CAR_THING_SERIAL || ''
+const ADB_ARGS = SERIAL ? ['-s', SERIAL] : []
 
 const DEVICE_EVENT = '/dev/input/event1' // rotary@0 — verified 2026-08-15, see gotcha doc
 // hexdump decodes the 16-byte input_event record (32-bit time_t, LE) into one

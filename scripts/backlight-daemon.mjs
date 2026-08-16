@@ -6,7 +6,7 @@
 // watches the claude-thing daemon over its WebSocket protocol (same one
 // device/src/daemon.ts uses from the browser) for sessions/permissions, and
 // it polls services/deviceinfo/server.js (:8791/state) for a failed
-// fleet-host fleet action (Phase E — see FleetWatcher below). Both feed one
+// fleet-box action (Phase E — see FleetWatcher below). Both feed one
 // StateMachine and drive /sys/class/backlight/aml-bl on the device via adb
 // shell round trips.
 //
@@ -43,17 +43,19 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
-// ADB must be the WINDOWS binary — see scripts/keep-adb-reverse.sh. The path
-// contains `deskthing` only because that's where the binary happens to live;
-// DeskThing itself is dropped from this project.
-const ADB = process.env.CAR_THING_ADB || '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
-// ⚠ ALWAYS address the Car Thing by serial. A bare `adb shell` fails outright
-// with "error: more than one device/emulator" the moment ANY second device is
-// attached — a phone on wireless debugging is enough, and it took this service
-// (and the reverse tunnel) down in production on 2026-08-02. Override with
-// CAR_THING_SERIAL if the device is ever replaced.
-const SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
-const ADB_ARGS = ['-s', SERIAL]
+// ADB path: on WSL this must be the WINDOWS binary — see
+// scripts/keep-adb-reverse.sh. Generic 'adb' default covers a plain Linux
+// host with adb already on PATH; scripts/setup.sh auto-detects the WSL case.
+const ADB = process.env.CAR_THING_ADB || 'adb'
+// ⚠ ALWAYS address the Car Thing by serial once a second device can ever be
+// attached. A bare `adb shell` fails outright with "error: more than one
+// device/emulator" the moment ANY second device is attached — a phone on
+// wireless debugging is enough, and it took this service (and the reverse
+// tunnel) down in production on 2026-08-02. Unset is fine for the common
+// single-device case (below omits `-s` entirely); scripts/setup.sh
+// auto-detects a serial when there's exactly one device to disambiguate from.
+const SERIAL = process.env.CAR_THING_SERIAL || ''
+const ADB_ARGS = SERIAL ? ['-s', SERIAL] : []
 const BACKLIGHT = '/sys/class/backlight/aml-bl/brightness'
 const ACTUAL_BACKLIGHT = '/sys/class/backlight/aml-bl/actual_brightness'
 const ALS_PROGRAM = 'backlight' // supervisord program name for the sp-als-backlight daemon — see the header comment
@@ -552,7 +554,7 @@ class DaemonClient {
 // ---------------------------------------------------------------------------
 // Fleet failure watch — Phase E's second input, alongside the claude-thing
 // WS above. Polls services/deviceinfo/server.js (:8791/state) for a failed
-// fleet-host action and drives the same pulse machinery (Ruling 13,
+// fleet-box action and drives the same pulse machinery (Ruling 13,
 // the internal fleet-view spec "Phase E — loud failure via the
 // backlight"). See StateMachine#updateFleetResult for the latch/ack logic.
 //

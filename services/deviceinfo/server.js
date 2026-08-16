@@ -25,12 +25,14 @@ const HOST = '127.0.0.1'
 const SOURCE_TIMEOUT_MS = 2000
 
 const ROUTER_URL = 'http://127.0.0.1:8081/v1/models'
-// ⚠ NOT localhost. The always-on generalist ("coder") runs on the secondary-host
-// box, not this one — the ":8084" shorthand used everywhere omits the host and
-// probing 127.0.0.1 reports a healthy service as OFFLINE. `/health` is the
+// OPTIONAL. The always-on generalist ("coder") is a second, independent LLM
+// box -- unset means nobody has one, not an error. ⚠ NOT localhost when it
+// IS set: this runs on a separate machine from this service, so the ":8084"
+// shorthand used elsewhere always needs the host too, and probing 127.0.0.1
+// would report a healthy remote service as OFFLINE. `/health` is the
 // endpoint the session-start fleet probe uses; match it.
-const CODER_HOST = process.env.CODER_HOST || '192.0.2.11'
-const CODER_URL = `http://${CODER_HOST}:8084/health`
+const CODER_HOST = process.env.CODER_HOST || null
+const CODER_URL = CODER_HOST ? `http://${CODER_HOST}:8084/health` : null
 // Sibling projects in the same workspace, not part of this repo -- derived
 // from this file's own location (never a hardcoded home) so the service
 // still finds them if the workspace is cloned somewhere else, and degrades
@@ -49,12 +51,27 @@ const OBLIGATIONS_CACHE_MS = 30_000
 // device/emulator" the instant a second device (e.g. a phone) joins the adb
 // server -- see scripts/keep-adb-reverse.sh for the incident this already
 // caused once.
-const ADB = process.env.CAR_THING_ADB || '/mnt/c/Users/YOURUSER/AppData/Local/Programs/deskthing/resources/win/adb.exe'
-const CAR_THING_SERIAL = process.env.CAR_THING_SERIAL || 'DEVICESERIAL'
+// Required, but auto-detected by scripts/setup.sh (not asked for) rather than
+// defaulted here -- see INSTALL.md. The generic 'adb' default below only
+// covers the common case of a Linux host with adb already on PATH; a WSL host
+// needs the Windows adb.exe path, which setup.sh probes for under /mnt/c/.
+const ADB = process.env.CAR_THING_ADB || 'adb'
+// Empty means "no explicit serial" -- readDevice() below omits `-s` entirely
+// in that case, which works fine for the common single-device case. A serial
+// only becomes REQUIRED once a second adb device (e.g. a phone) joins the same
+// adb server -- see scripts/keep-adb-reverse.sh for the incident that caused.
+const CAR_THING_SERIAL = process.env.CAR_THING_SERIAL || ''
 // The CONTROL grid's allowlist -- ARRAY ORDER IS GRID ORDER. See its own
 // _comment block for the schema; adding/reordering a button is a JSON edit,
 // not a code change. Host-side only, not device-writable.
 const BUTTONS_PATH = path.join(__dirname, 'buttons.json')
+// OPTIONAL. buttons.json's argv/stopArgv entries may contain the literal
+// token `${CONTROL_SCRIPTS_DIR}` where a path to the owner's own fleet-control
+// scripts (e.g. router-control.sh) belongs -- see buttons.json.example. Unset
+// means those entries are left as the literal token, which execFile then
+// fails to find (ENOENT) -- an honest per-button error, not a crash and not a
+// silent no-op.
+const CONTROL_SCRIPTS_DIR = process.env.CONTROL_SCRIPTS_DIR || ''
 const DEVICE_CACHE_MS = 20_000
 // Not the 2s SOURCE_TIMEOUT_MS -- a model load is genuinely slow. This is a
 // safety net against a hung process, not a bound on the HTTP response (the
@@ -119,13 +136,15 @@ async function readFleetRouter() {
 }
 
 /** 2. :8084 reachability only -- a plain boolean. Do NOT parse a body; it
- *  returned empty on the always-on generalist when probed. */
+ *  returned empty on the always-on generalist when probed.
+ *  CODER_HOST unset -> unconfigured, no probe. */
 async function readFleetCoder() {
+  if (!CODER_HOST) return { reachable: false, configured: false }
   try {
     await fetchWithTimeout(CODER_URL, SOURCE_TIMEOUT_MS)
-    return { reachable: true }
+    return { reachable: true, configured: true }
   } catch (err) {
-    return { reachable: false, error: String(err?.message ?? err) }
+    return { reachable: false, configured: true, error: String(err?.message ?? err) }
   }
 }
 
@@ -237,9 +256,10 @@ async function readDevice() {
     'df -h /',
     'cat /sys/class/backlight/aml-bl/brightness',
   ].join(`; echo ${DEVICE_SPLIT}; `)
+  const adbArgs = CAR_THING_SERIAL ? ['-s', CAR_THING_SERIAL, 'shell', remoteCmd] : ['shell', remoteCmd]
   let data
   try {
-    const stdout = await execFileTimeout(ADB, ['-s', CAR_THING_SERIAL, 'shell', remoteCmd], SOURCE_TIMEOUT_MS)
+    const stdout = await execFileTimeout(ADB, adbArgs, SOURCE_TIMEOUT_MS)
     const [tempRaw, uptimeRaw, freeRaw, dfRaw, blRaw] = stdout.split(DEVICE_SPLIT).map((s) => s.trim())
     const tempMilli = Number(tempRaw)
     data = {
@@ -283,7 +303,7 @@ async function buildState() {
     // fleet-aggregator/docs/fleet-state-contract.md. `fleet_state` is null with a
     // `fleet_state_error` reason when the aggregator is unreachable or
     // returns something that isn't a JSON object; this service never
-    // fabricates a document and never falls back to probing fleet-host
+    // fabricates a document and never falls back to probing the fleet host
     // directly. `serverNowMs` (a second clock alongside `ts`) is gone -- the
     // contract carries per-probe `age_s`, which is strictly better.
     fleet_state: fleetState.doc,
@@ -336,6 +356,15 @@ async function loadButtons() {
     const parsed = JSON.parse(raw)
     const list = Array.isArray(parsed?.buttons) ? parsed.buttons : null
     if (!list) throw new Error('"buttons" is not an array')
+    // Resolve the `${CONTROL_SCRIPTS_DIR}` token before validation, so a bad
+    // substitution still goes through the same reject-one-entry path below.
+    for (const b of list) {
+      for (const key of ['argv', 'stopArgv']) {
+        if (Array.isArray(b?.[key])) {
+          b[key] = b[key].map((s) => (typeof s === 'string' ? s.replaceAll('${CONTROL_SCRIPTS_DIR}', CONTROL_SCRIPTS_DIR) : s))
+        }
+      }
+    }
     const ids = new Set()
     const validated = []
     for (const b of list) {

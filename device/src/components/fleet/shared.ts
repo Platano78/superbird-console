@@ -1,16 +1,29 @@
 import type { CSSProperties } from 'react'
 import type { FleetHost, FleetStateDoc } from '../../deviceInfo'
 import { requestFastPoll } from '../../deviceInfo'
+import { inertAction } from '../../demo/inert'
 import type { FleetPage } from '../../useFleetNav'
 
-/** Stable host id -- the contract says consumers may hardcode this
- *  (fleet-aggregator/docs/fleet-state-contract.md: `"id": "fleet-host" // stable key
- *  — consumers may hardcode this`). Primary surface for this device. */
-export const PRIMARY_HOST_ID = 'fleet-host'
-
+/** The primary surface is chosen by ROLE, never by a hardcoded host id.
+ *
+ *  The contract permits consumers to hardcode the primary's `id`, and this
+ *  once did. That baked one particular deployment's host name into shipped
+ *  source, which is both a portability bug (anyone else's fleet names its
+ *  hosts differently) and a privacy one. `role` is carried by every host in
+ *  the document, exactly one is `primary`, and it means precisely what this
+ *  function is asking. Falling back to the first host keeps a single-host
+ *  document working even if a producer ever omits the field. */
 export function primaryHost(doc: FleetStateDoc | null): FleetHost | null {
   if (!doc) return null
-  return doc.hosts.find((h) => h.id === PRIMARY_HOST_ID) ?? null
+  return doc.hosts.find((h) => h.role === 'primary') ?? doc.hosts[0] ?? null
+}
+
+/** Title for the two branches that have NO host document to take a label
+ *  from (service unreachable / aggregator down). With no document there is
+ *  no host name to print and guessing one would be a lie, so this names the
+ *  SUBJECT rather than any particular machine. */
+export function primaryHostTitle(): string {
+  return 'FLEET'
 }
 
 /** Every host that isn't the primary surface -- rendered monitoring-only
@@ -18,7 +31,8 @@ export function primaryHost(doc: FleetStateDoc | null): FleetHost | null {
  *  naturally"). Order preserved from the document. */
 export function secondaryHosts(doc: FleetStateDoc | null): FleetHost[] {
   if (!doc) return []
-  return doc.hosts.filter((h) => h.id !== PRIMARY_HOST_ID)
+  const primary = primaryHost(doc)
+  return doc.hosts.filter((h) => h !== primary)
 }
 
 // Icons are PLAIN RUNTIME STRINGS, not ES-module asset imports — see
@@ -42,6 +56,9 @@ const ACTION_URL = 'http://127.0.0.1:8791/action'
  *  MbSlot.tsx's own fireAction (each slot component keeps its own copy —
  *  the established pattern here, see ControlSlot.tsx's own iconUrl). */
 export function fireAction(id: string) {
+  // 🔴 DEMO GUARD (ruling 4): in demo mode NOTHING is posted -- the tap
+  // returns here, having published a visible "action not sent" notice.
+  if (inertAction(id)) return
   requestFastPoll()
   void fetch(ACTION_URL, {
     method: 'POST',
@@ -95,7 +112,7 @@ export function hostLoading(host: FleetHost | null): boolean {
 
 /** True when this host's senior seat can take a herald summon/dismiss verb
  *  at all (`commands.summon` carries "herald"). Hosts with no summon verb
- *  (secondary-host, router-5080) render seats read-only. */
+ *  (secondary hosts) render seats read-only. */
 export function heraldCapable(host: FleetHost | null): boolean {
   return !!host?.commands.summon.includes('herald')
 }
@@ -109,7 +126,7 @@ export function heraldActive(host: FleetHost | null): boolean {
 
 /** `occupant.short` is best-effort and, on the live producer today, a raw
  *  33+ char GGUF basename -- see the fleet-state contract §2.1 (we
- *  asked fleet-aggregator for a hard-capped `short_display` field; this truncation is
+ *  asked the fleet-state aggregator for a hard-capped `short_display` field; this truncation is
  *  the stopgap until it lands).
  *
  *  ⚠ Takes the BASENAME before clipping. The fallback path (fleet_state down)

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 // COMPOSE renders as a disabled placeholder in Phase C (Ruling 12: the
-// fleet-host-side launcher it needs is a separate, blocked artifact) --
+// primary-host-side launcher it needs is a separate, blocked artifact) --
 // it still cycles into the page order so M reaches it and the "blocked"
 // state is visible, never a page that's silently missing.
 export type FleetPage = 'seats' | 'leaves' | 'aux' | 'thermals' | 'compose'

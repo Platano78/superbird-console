@@ -1,7 +1,7 @@
 /**
  * COMPOSE -- Phase D placeholder. Phase D (the ad-hoc multi-model launcher)
- * is BLOCKED on a fleet-host-side script that does not exist yet (Ruling
- * 12: `~/compose.sh` or a new `profile.sh` verb, owned by fleet-aggregator, reviewed
+ * is BLOCKED on a primary-host-side script that does not exist yet (Ruling
+ * 12: `~/compose.sh` or a new `profile.sh` verb, owned by the primary fleet host, reviewed
  * separately). This page renders as an explicitly DISABLED placeholder with
  * its blocking reason -- never a dead tile that silently no-ops. It carries
  * no navigable items (itemCountFor('compose', ...) === 0 in shared.ts), so
@@ -14,7 +14,7 @@ export function ComposePage() {
       <div className="mt-2 rounded bg-stone-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
         DISABLED
       </div>
-      <div className="mt-3 text-xs text-stone-600">blocked: fleet-host launcher not built</div>
+      <div className="mt-3 text-xs text-stone-600">blocked: host-side launcher not built</div>
     </div>
   )
 }

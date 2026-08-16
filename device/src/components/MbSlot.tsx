@@ -4,7 +4,7 @@ import type { DeviceInfoState } from '../deviceInfo'
 import { useConfirmArm } from './fleet/useConfirmArm'
 import { useFireLatch } from './fleet/useFireLatch'
 import { useFailureBanner } from './fleet/useFailureBanner'
-import { itemCountFor, primaryHost, resolveConfirmAction, truncateOccupant } from './fleet/shared'
+import { itemCountFor, primaryHost, primaryHostTitle, resolveConfirmAction, truncateOccupant } from './fleet/shared'
 import { useFleetNav } from '../useFleetNav'
 import { SeatsPage } from './fleet/SeatsPage'
 import { LeavesPage } from './fleet/LeavesPage'
@@ -79,15 +79,15 @@ export function MbSlot({ info, reachable, navHandlersRef }: Props) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
         <GaugeArc value={null} tone="neutral" size={140} />
-        <div className="-mt-1 text-2xl font-semibold text-stone-400">FLEET-HOST</div>
+        <div className="-mt-1 text-2xl font-semibold text-stone-400">{primaryHostTitle()}</div>
         <div className="mt-1 text-xs uppercase tracking-widest text-stone-600">deviceinfo service unreachable</div>
       </div>
     )
   }
 
   // Switching view — replaces the whole shell. MUST be checked BEFORE the
-  // fleet-state-unreachable branch: mid-flip both fleet-host ports are down
-  // by design (profile.sh stop_all), so the aggregator reporting the host as
+  // fleet-state-unreachable branch: mid-flip both of the primary host's ports
+  // are down by design (profile.sh stop_all), so the aggregator reporting the host as
   // down is the EXPECTED state of a switch in progress — showing
   // "unreachable" then would report a deliberate action as an outage
   // (observed on hardware, first live flip 2026-08-13).
@@ -119,7 +119,7 @@ export function MbSlot({ info, reachable, navHandlersRef }: Props) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
         <GaugeArc value={null} tone="neutral" size={140} />
-        <div className="-mt-1 text-2xl font-semibold text-stone-400">FLEET-HOST</div>
+        <div className="-mt-1 text-2xl font-semibold text-stone-400">{primaryHostTitle()}</div>
         <div className="mt-1 text-xs uppercase tracking-widest text-stone-600">
           {info.fleet_state_error ?? 'fleet state unavailable'}
         </div>

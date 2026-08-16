@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { DEMO_FORCED } from './demo/demoMode'
 
 // `ids` is the router's live model roster -- ControlSlot renders its tiles
 // from this, never from a hardcoded list (the roster changes).
@@ -42,8 +43,8 @@ export type MbSwitching = {
 } | null
 export type MbLastResult = { id: string; ok: boolean; ms: number; error?: string } | null
 
-// `fleet-state/1` -- THE SCHEMA OF RECORD, owned by fleet-aggregator:
-// fleet-aggregator/docs/fleet-state-contract.md. car-thing is a CONSUMER only; nothing
+// `fleet-state/1` -- THE SCHEMA OF RECORD, owned by the fleet-state aggregator:
+// see the fleet-state contract. car-thing is a CONSUMER only; nothing
 // here re-derives fleet state by probing /v1/models (contract "one producer,
 // many consumers"). Types below mirror the contract's document shape.
 //
@@ -60,8 +61,8 @@ export type FleetOccupant = {
   id: string
   /** Best-effort prettification, may be wrong, missing, or (today) a raw
    *  33+ char GGUF basename that doesn't fit a ~12-char tile. Never parsed --
-   *  see the fleet-state contract §2.1: we asked fleet-aggregator for a
-   *  short_display field; until it lands the device truncates this. */
+   *  see the fleet-state contract §2.1: we asked the fleet-state
+   *  aggregator for a short_display field; until it lands the device truncates this. */
   short?: string
   capabilities?: string[]
 }
@@ -119,10 +120,10 @@ export type FleetThermals = {
   gpu_busy_pct: number | null
   nvme_c: number | null
   load1: number | null
-  /** null BY DESIGN on fleet-host -- no tachometer exists. Never render as
+  /** null BY DESIGN on the primary fleet host -- no tachometer exists. Never render as
    *  a dead gauge or "N/A"; switch on `fan_control` instead. */
   fan_rpm: number | null
-  /** null BY DESIGN on fleet-host -- no OS-controllable PWM. */
+  /** null BY DESIGN on the primary fleet host -- no OS-controllable PWM. */
   pwm_pct: number | null
   fan_control: 'bios' | 'os' | 'unknown'
   status: FleetThermalStatus
@@ -183,12 +184,16 @@ export type MbState = {
 }
 
 /** Seat-occupancy-only fallback, sourced by services/deviceinfo/mb.js
- *  ONLY when `fleet_state` is null (the fleet-aggregator aggregator is unreachable) --
+ *  ONLY when `fleet_state` is null (the fleet-state aggregator is unreachable) --
  *  a SIBLING of `fleet_state`, never merged into it. `occupant` is the raw
  *  `/v1/models` `models[0].name` string, verbatim -- no leaf/profile
- *  inference (that stays fleet-aggregator's job alone, per fleet-state-contract.md). */
+ *  inference (that stays the aggregator's job alone, per the fleet-state contract). */
 export type FleetFallbackSeat = { id: string; port: number; up: boolean; occupant: string | null }
-export type FleetFallback = { probedAtMs: number; seats: FleetFallbackSeat[] } | null
+/** `configured` is the service's own "unset = disabled, never probe" report
+ *  (services/deviceinfo/mb.js): false means no fleet host is configured at
+ *  all, which is different from configured-and-down. Demo mode's automatic
+ *  activation keys off exactly that distinction -- see demo/demoMode.ts. */
+export type FleetFallback = { probedAtMs: number; configured?: boolean; seats: FleetFallbackSeat[] } | null
 export type DeviceInfoState = {
   fleet: { router: RouterInfo; coder: CoderInfo }
   queue: QueueCounts
@@ -252,6 +257,13 @@ export function useDeviceInfo() {
   const inFlight = useRef(false)
 
   useEffect(() => {
+    // 🔴 DEMO GUARD. Forced demo (`?demo=1` or the SUPERBIRD_DEMO build flag)
+    // opens NO socket of any kind: the poll loop is never started, so no
+    // request to :8791 can leave the device. App.tsx swaps in the fixture
+    // document instead. AUTOMATIC demo deliberately keeps polling -- that
+    // read-only probe is the only way the app can notice a real backend
+    // arriving and hand the screen back to live data.
+    if (DEMO_FORCED) return
     let cancelled = false
     let nextTimer: number | null = null
     async function poll() {

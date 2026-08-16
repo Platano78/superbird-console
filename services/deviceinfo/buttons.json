@@ -24,7 +24,12 @@
     "                         400s these anyway; this makes it visible instead of silent).",
     "requiresLoadedModel: true -> tile goes inert while nothing is loaded (kill: the service",
     "                              400s 'no model loaded' anyway; same idea as requiresRouter,",
-    "                              added 2026-08-11 after KILL rendered live with nothing to kill)."
+    "                              added 2026-08-11 after KILL rendered live with nothing to kill).",
+    "",
+    "argv/stopArgv entries below use the literal token ${CONTROL_SCRIPTS_DIR}, substituted at load",
+    "time from the CONTROL_SCRIPTS_DIR env var (services/deviceinfo/server.js, loadButtons()) --",
+    "point it at wherever YOUR fleet-control scripts (router-control.sh, start-router.sh) live.",
+    "Left unset, these buttons fail per-action with ENOENT rather than crashing the service."
   ],
   "version": 1,
   "buttons": [
@@ -34,7 +39,7 @@
       "kind": "model",
       "expectedModel": "agents-qwen35-9b",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "agents-qwen35-9b"
       ],
@@ -51,7 +56,7 @@
       "kind": "model",
       "expectedModel": "coding-nouscoder-14b",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "coding-nouscoder-14b"
       ],
@@ -68,7 +73,7 @@
       "kind": "model",
       "expectedModel": "coding-qwen3-next",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "coding-qwen3-next"
       ],
@@ -85,7 +90,7 @@
       "kind": "model",
       "expectedModel": "gemma4-26b",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "gemma4-26b"
       ],
@@ -102,7 +107,7 @@
       "kind": "model",
       "expectedModel": "gemma4-31b",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "gemma4-31b"
       ],
@@ -119,7 +124,7 @@
       "kind": "model",
       "expectedModel": "general-qwen36-35b",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "general-qwen36-35b"
       ],
@@ -136,7 +141,7 @@
       "kind": "model",
       "expectedModel": "reasoning-bonsai-27b-ternary",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "reasoning-bonsai-27b-ternary"
       ],
@@ -153,7 +158,7 @@
       "kind": "model",
       "expectedModel": "reasoning-cascade2",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "reasoning-cascade2"
       ],
@@ -170,7 +175,7 @@
       "kind": "model",
       "expectedModel": "reasoning-qwen36-27b-mtp",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "reasoning-qwen36-27b-mtp"
       ],
@@ -187,7 +192,7 @@
       "kind": "model",
       "expectedModel": "reasoning-qwen36-27b-heretic-q3km-mtp",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
         "reasoning-qwen36-27b-heretic-q3km-mtp"
       ],
@@ -204,7 +209,7 @@
       "subLabel": "unload",
       "kind": "action",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/router-control.sh",
+        "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "unload"
       ],
       "appendLoadedModel": true,
@@ -221,11 +226,11 @@
       "displayName": "ROUTER",
       "kind": "toggle",
       "argv": [
-        "/home/youruser/project/llama-cpp-native/start-router.sh",
+        "${CONTROL_SCRIPTS_DIR}/start-router.sh",
         "start"
       ],
       "stopArgv": [
-        "/home/youruser/project/llama-cpp-native/start-router.sh",
+        "${CONTROL_SCRIPTS_DIR}/start-router.sh",
         "stop"
       ],
       "requiresRouter": false,
