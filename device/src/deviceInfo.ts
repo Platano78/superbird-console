@@ -81,6 +81,16 @@ export type FleetSeat = {
   occupant: FleetOccupant | null
   /** true only when a 122B-class herald holds this seat (senior only). */
   herald?: boolean
+  /** true = a slot is generating RIGHT NOW (llama.cpp /slots, is_processing).
+   *  false = genuinely idle. null = the lane cannot be asked (--no-slots
+   *  answers 501, the 5080 llama-swap router 404s) -- null is NOT idle and
+   *  must render identically to false (fleet-state-contract.md field note
+   *  beginning "`busy` is the "something is happening" signal"). */
+  busy?: boolean | null
+  /** Slots with is_processing -- only meaningful alongside `busy`. */
+  busy_slots?: number | null
+  /** Total slots (this launch's `--parallel N`). */
+  slots?: number | null
   checked_at_epoch?: number
   /** Per-probe staleness -- trust this over the document's own generated_at
    *  (law 5). Grey the individual tile, never the page. */

@@ -31,6 +31,11 @@ export function primaryDemoHost(nowMs: number): FleetHost {
         http_ok: true,
         ready: loading ? null : true,
         ready_gate: 'generation',
+        // CHANNELING branch: a slot is generating right now, out of 4 total --
+        // exercises the "CHANNELING n/slots" form (busy===true, slots>1).
+        busy: loading ? null : true,
+        busy_slots: loading ? null : 1,
+        slots: loading ? null : 4,
         occupant: { id: 'qwen3-coder-30b', short: 'qwen3-coder-30b', capabilities: ['tools'] },
         checked_at_epoch: epoch(nowMs, 2),
         age_s: 2,
@@ -43,6 +48,10 @@ export function primaryDemoHost(nowMs: number): FleetHost {
         http_ok: true,
         ready: null,
         ready_gate: 'none',
+        // Genuinely idle -- must render byte-identical to null (no channeling).
+        busy: false,
+        busy_slots: 0,
+        slots: 1,
         occupant: null,
         herald: false,
         checked_at_epoch: epoch(nowMs, 3),

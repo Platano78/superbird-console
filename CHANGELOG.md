@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **A `CHANNELING` indicator on the fleet view** — a fuchsia micro-line that lights on a seat
+  only while it is actively generating a completion, with a slot count when the seat has more
+  than one slot (e.g. `CHANNELING 1/4`). Before this, a seat marked `serving` looked identical
+  whether the model was parked or thirty seconds into a long completion — the only thing moving
+  on screen proved the *monitor* was alive, not the model. The underlying `busy` field is
+  three-valued: generating, idle, or unknown (some inference servers don't expose per-slot
+  status). Unknown and idle render identically — nothing at all — because an idle light on a
+  busy seat would be a silent lie that nobody would notice, unlike a wrong status pill. A stale
+  reading renders nothing too, since a stale "busy" is only a claim about the past.
+
 ## [0.2.0] - 2026-08-16
 
 First public release. The project existed privately before this; the version reflects the

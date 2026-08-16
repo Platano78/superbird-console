@@ -28,6 +28,11 @@ function secondaryDemoHosts(nowMs: number): FleetHost[] {
           state: 'serving',
           http_ok: true,
           ready: true,
+          // CANNOT BE ASKED branch (--no-slots / llama-swap 404): null must
+          // render identically to false -- no channeling, ever.
+          busy: null,
+          busy_slots: null,
+          slots: null,
           occupant: { id: 'llama-3.1-8b', short: 'llama-3.1-8b' },
           age_s: 4,
         },

@@ -45,6 +45,19 @@ function seatBodyText(seat: FleetSeat): string {
   }
 }
 
+/** CHANNELING -- the busy micro-line (fleet-state-contract.md field note
+ *  beginning "`busy` is the "something is happening" signal, and `null` is
+ *  not `false`"). Renders ONLY on `busy === true`; `false` and `null` must
+ *  produce this returning null identically -- `null` means "could not ask",
+ *  never "idle". Stale wins over busy: a busy reading older than STALE_S is
+ *  a claim about the past, not the present. Busy is a THIRD axis, never
+ *  expressed with border/ring (border = status, ring = cursor). */
+function channelingText(seat: FleetSeat): string | null {
+  if (seat.busy !== true) return null
+  if (seat.age_s > STALE_S) return null
+  return seat.slots && seat.slots > 1 ? `CHANNELING ${seat.busy_slots ?? '?'}/${seat.slots}` : 'CHANNELING'
+}
+
 function seatTone(seat: FleetSeat): { border: string; body: string; label: string } {
   const stale = seat.age_s > STALE_S
   switch (seat.state) {
@@ -69,12 +82,14 @@ function seatTone(seat: FleetSeat): { border: string; body: string; label: strin
 function WorkerSeatTile({ seat }: { seat: FleetSeat }) {
   const tone = seatTone(seat)
   const stale = seat.state === 'unreachable' && seat.age_s > STALE_S
+  const channeling = channelingText(seat)
   return (
     <div className={`relative flex flex-col items-center justify-center border-2 rounded ${tone.border}`}>
       <div className={`text-xs uppercase tracking-widest ${tone.label}`}>
         {seat.label.toUpperCase()} · {seat.port}
       </div>
       <div className={`mt-1 text-xl font-bold uppercase tracking-widest ${tone.body}`}>{seatBodyText(seat)}</div>
+      {channeling && <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-fuchsia-400">{channeling}</div>}
       {seat.state === 'unreachable' && stale && (
         <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-red-400">STALE</div>
       )}
@@ -115,6 +130,7 @@ function SeniorSeatTile({
   // Border = status, ring = cursor position. See the LeavesPage note: sharing
   // one property made the cursor invisible on hardware.
   const borderCls = isPending ? 'border-amber-400' : isLatched ? 'border-sky-400' : tone.border
+  const channeling = channelingText(seat)
 
   return (
     <div
@@ -125,6 +141,7 @@ function SeniorSeatTile({
         {seat.label.toUpperCase()} · {seat.port}
       </div>
       <div className={`mt-1 text-xl font-bold uppercase tracking-widest ${tone.body}`}>{seatBodyText(seat)}</div>
+      {channeling && <div className="text-[9px] font-bold uppercase tracking-widest text-fuchsia-400">{channeling}</div>}
       <div className="mt-1 text-[10px] uppercase tracking-widest text-stone-400">SILVER SURFER</div>
       <div className="text-sm font-semibold uppercase tracking-widest text-stone-200">
         {isPending ? 'TAP AGAIN' : isLatched ? 'SENT' : herald ? 'DISMISS' : 'SUMMON'}
@@ -140,12 +157,14 @@ function SeniorSeatTile({
 function SecondaryHostChip({ host }: { host: FleetHost }) {
   const seat = host.seats[0]
   const tone = seat ? seatTone(seat) : { border: 'border-stone-800', body: 'text-stone-600', label: 'text-stone-700' }
+  const channeling = host.reachable && seat ? channelingText(seat) : null
   return (
     <div className={`flex flex-col items-center justify-center border rounded px-2 py-1 ${host.reachable ? tone.border : 'border-stone-800'}`}>
       <div className="text-[9px] uppercase tracking-widest text-stone-500">{host.label}</div>
       <div className={`text-[11px] font-semibold uppercase tracking-widest ${host.reachable ? tone.body : 'text-stone-700'}`}>
         {host.reachable ? (seat ? seatBodyText(seat) : '--') : 'UNREACHABLE'}
       </div>
+      {channeling && <div className="text-[8px] font-bold uppercase tracking-widest text-fuchsia-400">{channeling}</div>}
     </div>
   )
 }
