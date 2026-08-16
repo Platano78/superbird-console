@@ -47,6 +47,22 @@ MB_SSH_HOST=fleet-box
 # FLEET screen's health lamp.
 CODER_HOST=192.0.2.20
 
+# --- OPTIONAL: sibling projects -------------------------------------------
+# Two extra blocks in GET /state, both reported to nobody by default: the
+# device app does not render them today, so leaving these unset costs you
+# nothing. They exist for whatever you point them at -- neither is part of
+# this repo, and neither is guessed from this checkout's location.
+
+# Directory holding six state dirs named pending, in-progress, done, review,
+# escalated, failed. Counted (non-dotfile entries) into /state's queue block.
+# Unset = every count reports null with "QUEUE_ROOT not set", never 0.
+QUEUE_ROOT=
+
+# Script run as `<script> status`; its stdout becomes /state's obligations
+# line verbatim. Invoked with execFile (argv array, no shell) and cached 30s.
+# Unset = the line reports null with "OBLIGATIONS_SCRIPT not set".
+OBLIGATIONS_SCRIPT=
+
 # --- OPTIONAL: CONTROL grid -----------------------------------------------
 # Directory holding YOUR OWN fleet-control scripts (router-control.sh,
 # start-router.sh) -- substituted into services/deviceinfo/buttons.json's

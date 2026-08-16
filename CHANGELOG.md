@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Changed
+- **`QUEUE_ROOT` and `OBLIGATIONS_SCRIPT` are now plain optional config vars**, not paths
+  derived from the service's own location. The derivation looked layout-independent but was
+  not: it hardcoded one workspace's sibling *directory names*, so the path could only ever
+  resolve for its author and silently missed for everyone else. Unset now means unconfigured —
+  every count reports `null` with a reason rather than a fabricated `0`, matching how
+  `MB_HOST`/`CODER_HOST` already behave. Neither block is rendered by the device app today, so
+  leaving both unset costs nothing; set them in `superbird.conf` to restore the old behaviour.
+
 ## [0.4.0] - 2026-08-16
 
 ### Added

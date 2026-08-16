@@ -42,10 +42,12 @@ detects/writes them. Summary:
 loads it via `EnvironmentFile=` pointing at this checkout (the leading `-` tolerates a missing
 file). The units in the repo are templates: `scripts/setup.sh` substitutes this checkout's path and
 your `node` binary as it installs them, so nothing assumes a directory layout. Running a script directly from a shell instead, just export the vars first.
-`services/deviceinfo/server.js`'s `QUEUE_ROOT`/`OBLIGATIONS_SCRIPT` are derived from the
-service's own file location rather than a var — they point at sibling projects
-(`piplay/pi-harness`, `_standards/obligations`) in the same workspace and simply report
-"unavailable" (never fabricate a value) if those don't exist alongside this repo.
+`services/deviceinfo/server.js`'s `QUEUE_ROOT`/`OBLIGATIONS_SCRIPT` are plain optional vars
+pointing at projects outside this repo. They used to be derived from the service's own file
+location, which only looked layout-independent — it baked in one workspace's sibling directory
+names, so the path resolved for its author and silently missed for everyone else. Unset now
+means unconfigured: both report "unavailable" (never fabricate a value), and the device app
+does not render either block today.
 
 **`services/deviceinfo/buttons.json`'s CONTROL grid** points at a *sibling* repo (fleet-control
 scripts) outside `car-thing` entirely via the `${CONTROL_SCRIPTS_DIR}` token in every
