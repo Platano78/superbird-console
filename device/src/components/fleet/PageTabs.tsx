@@ -30,7 +30,7 @@ export function PageTabs({ page, goToPage }: Props) {
     // unsupported on this Chromium 69 kiosk (it landed in Chrome 84) and
     // renders as ZERO spacing. Grid gap is the only gap form that works here.
     // This exact violation already shipped once and was fixed on hardware
-    // (mb-slot_spec.md amend log: "flex-gap violation fixed (badges → ml-2)").
+    // (the internal mb-slot spec amend log: "flex-gap violation fixed (badges → ml-2)").
     <div className="flex shrink-0 items-center justify-center" style={{ marginBottom: 4 }}>
       {FLEET_PAGES.map((p, i) => (
         <div

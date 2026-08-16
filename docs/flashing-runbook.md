@@ -144,7 +144,7 @@ DeskThing ships its own adb at `%LOCALAPPDATA%\Programs\deskthing\resources\win\
 there is also a global one at `C:\Program Files (x86)\ADB and Fastboot++\adb.exe`. Either
 works — just don't run both servers.
 
-**Rule 3 — the reverse tunnel** (⚠ **still unproven** — see `status.md`):
+**Rule 3 — the reverse tunnel** (⚠ **still unproven** — see the internal status doc):
 
 ```powershell
 & $adb reverse tcp:8790 tcp:8790

@@ -39,8 +39,9 @@ detects/writes them. Summary:
 | `CONTROL_SCRIPTS_DIR` | Optional | Directory holding your own fleet-control scripts, substituted into `buttons.json`'s `${CONTROL_SCRIPTS_DIR}` tokens (see below). Unset = those CONTROL buttons fail per-press with ENOENT. |
 
 `scripts/setup.sh` writes these into `superbird.conf` (gitignored) at the repo root; each systemd unit
-loads it via `EnvironmentFile=-%h/project/car-thing/superbird.conf` (the leading `-` tolerates a missing
-file). Running a script directly from a shell instead, just export the vars first.
+loads it via `EnvironmentFile=` pointing at this checkout (the leading `-` tolerates a missing
+file). The units in the repo are templates: `scripts/setup.sh` substitutes this checkout's path and
+your `node` binary as it installs them, so nothing assumes a directory layout. Running a script directly from a shell instead, just export the vars first.
 `services/deviceinfo/server.js`'s `QUEUE_ROOT`/`OBLIGATIONS_SCRIPT` are derived from the
 service's own file location rather than a var — they point at sibling projects
 (`piplay/pi-harness`, `_standards/obligations`) in the same workspace and simply report
@@ -52,16 +53,24 @@ scripts) outside `car-thing` entirely via the `${CONTROL_SCRIPTS_DIR}` token in 
 `CONTROL_SCRIPTS_DIR` to enable those buttons, or leave it unset and they degrade to a per-press
 ENOENT (never a crash; see `loadButtons()` in `server.js`).
 
-## The two services (systemd --user)
+## The services (systemd --user)
 
-| Unit | Does |
-|---|---|
-| `claude-thing.service` | the daemon, from `~/claude-thing/daemon` |
-| `car-thing-adb.service` | re-asserts `adb reverse` every 30 s (`scripts/keep-adb-reverse.sh`) |
-| `car-thing-backlight.service` | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
+Three units ship in this repo and are installed by `scripts/setup.sh`. `claude-thing.service`
+is upstream's daemon, installed separately.
+
+| Unit | Ships here | Does |
+|---|---|---|
+| `claude-thing.service` | no — upstream | the daemon, from `~/claude-thing/daemon` |
+| `car-thing-deviceinfo.service` | yes | the `:8791` state/action service (`services/deviceinfo/server.js`) |
+| `car-thing-backlight.service` | yes | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
+| `car-thing-rotary.service` | yes | the host-side dial bridge (`scripts/rotary-bridge.mjs`) |
+
+⚠ `scripts/keep-adb-reverse.sh` re-asserts `adb reverse` every 30 s, but **no unit for it ships**
+— run it yourself, or wrap it in your own unit. Earlier revisions of this table listed a
+`car-thing-adb.service` that does not exist in this repo.
 
 ```bash
-systemctl --user status claude-thing.service car-thing-adb.service car-thing-backlight.service
+systemctl --user status claude-thing.service car-thing-deviceinfo.service car-thing-backlight.service
 systemctl --user restart claude-thing.service
 journalctl --user -u claude-thing.service -n 50 --no-pager
 curl -s http://127.0.0.1:8790/status        # the one-line health check
@@ -84,7 +93,8 @@ hooks-only — `sources` still lists `poller`, so trust `sessions` and the journ
 **Never run `claude-thing`'s `scripts/install-hooks.js`.** It rewrites `~/.claude/settings.json`
 wholesale and this box has a hand-tuned config. The by-hand installer that appends only, refuses
 to write if any existing entry would be lost, and backs up first:
-`scratchpad/install-hooks-by-hand.mjs` (reproduced below).
+`scripts/install-hooks-by-hand.mjs` (reproduced below). It was written in a session scratchpad
+and the old path lingered here after it moved into the repo.
 
 Seven `type:"http"` entries pointing at `http://127.0.0.1:8790/hook`:
 `PermissionRequest` (timeout 40), `SessionStart` 5, `SessionEnd` 3, `UserPromptSubmit` 5,
@@ -362,5 +372,5 @@ dashboard — only earns its keep on sessions that ask.
 - **`claude.question.answer` is UNVERIFIED.** Upstream answers questions by typing into the focused
   terminal via macOS Accessibility APIs; no Windows equivalent ships. Wiring is correct and it now
   fails visibly rather than silently, but it has never been seen to succeed.
-- The device drops off USB periodically; `car-thing-adb.service` recovers the tunnel, but ADB
+- The device drops off USB periodically; `scripts/keep-adb-reverse.sh` recovers the tunnel, but ADB
   itself needs the device present.

@@ -56,7 +56,7 @@ behind it). Unchanged by this pass.
 ```
 
 `fleet`/`queue`/`system`/`device` are unchanged by this work — documented here only so
-the top-level shape is complete; see `mb-slot_spec.md` / source comments in `server.js`
+the top-level shape is complete; see the internal mb-slot spec / source comments in `server.js`
 for their own history. Every source is independently probed with a hard 2000 ms timeout
 (`SOURCE_TIMEOUT_MS`) inside a `Promise.all`/`Promise.allSettled` fan-out — one slow or
 dead source degrades to an honest `null`/`error`, never a stall on the others.
@@ -185,7 +185,7 @@ are not proposed for the schema. Everything previously invented here — `reacha
 🔴 **Mid-flip, both of the primary fleet host's ports go down by design** (`profile.sh stop_all` tears
 down before relaunching). A consumer should check `switching` (and, once wired,
 `fleet_state`'s `leaf.transition`) BEFORE reading `fleet_state`'s seat states as "down" —
-this was observed on hardware once already (`mb-slot_spec.md` amend log, 2026-08-13),
+this was observed on hardware once already (the internal mb-slot spec amend log, 2026-08-13),
 before the contract existed to carry `leaf.transition` for exactly this case.
 
 🔴 **"Ready" is gated on a real completion (`timings.predicted_n > 0`), never on
