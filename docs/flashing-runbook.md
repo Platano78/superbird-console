@@ -95,7 +95,7 @@ assumption cost this project a full session of chasing a flash bug that never ex
 Verified 2026-08-01, after a successful flash. A booted thinglabs device enumerates as
 `1d6b:1014  Remote NDIS Compatible Device, ADB Interface` — **ADB and USB-ethernet
 together**, in the same bus slot the `GX-CHIP` occupied. It authorizes immediately
-(serial `DEVICESERIAL`); no on-device RSA prompt appears.
+(serial `<device-serial>`); no on-device RSA prompt appears.
 
 **Rule 1 — exactly one ADB server, and it must be Windows'.** The device is on Windows USB
 and WSL2 has no USB bus, so only a Windows-side server can see it. Mirrored networking makes

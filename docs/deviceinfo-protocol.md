@@ -7,10 +7,10 @@ Contract for `services/deviceinfo/server.js` (+ `services/deviceinfo/mb.js`) —
 carried fleet/mb state. `mb.*` and everything below lives here because it never lived
 there (Ruling 1, the internal fleet-view spec).
 
-> **Status (2026-08-15, rework pass).** fleet-aggregator published `fleet-state/1`
-> (`fleet-aggregator/docs/fleet-state-contract.md`) as the schema of record for fleet state, AFTER
+> **Status (2026-08-15, rework pass).** The fleet-state aggregator published `fleet-state/1`
+> (see the fleet-state contract) as the schema of record for fleet state, AFTER
 > this service had already shipped its own (worse, duplicated) shape. This service no
-> longer re-derives fleet state by polling `/v1/models` itself — it fetches fleet-aggregator's
+> longer re-derives fleet state by polling `/v1/models` itself — it fetches the
 > aggregator and re-exports the document verbatim. See the fleet-state contract
 > for the full delta history against the contract. Rows below marked ✅ were re-verified
 > against a live instance of this service (non-default port, scratch process) this pass.
@@ -68,12 +68,12 @@ disagreeing. `ts` remains for existing non-`mb` consumers.
 ### `fleet_state` — pass-through of `fleet-state/1`
 
 **This service does not own this schema and does not restate it here.** `fleet_state` is
-`GET http://localhost:8095/fleet-state.json` (The fleet aggregator) fetched and
+`GET http://localhost:8095/fleet-state.json` (the fleet-state aggregator, running locally) fetched and
 re-exported **byte-for-byte** under this key — unknown fields untouched, nothing
 whitelisted or reshaped, per the contract's law 7 (additive evolution, consumers ignore
 unknown keys). For the schema itself — `hosts[]`, `seats[]`, `leaf`, `thermals`,
 `commands`, `warnings`, and the seven design laws that make the shape non-obvious — read
-`fleet-aggregator/docs/fleet-state-contract.md`. Do not copy fields from it into this file; that file
+the fleet-state contract. Do not copy fields from it into this file; that file
 is the schema of record and its own change protocol explicitly forbids a second copy.
 
 ✅ Observed live: `fleet_state.schema === "fleet-state/1"`, `hosts[]` present with `seats`
@@ -88,14 +88,14 @@ and `commands` on each host.
 - **Failure is never fabricated.** If the aggregator is unreachable, answers non-200, or
   returns something that isn't a JSON object, `fleet_state: null` and `fleet_state_error`
   names the reason (`"http 503"`, `"invalid JSON: ..."`, a network error message, etc.).
-  There is **no fallback to probing fleet-host directly** — that would resurrect the
+  There is **no fallback to probing the primary fleet host directly** — that would resurrect the
   duplicate leaf-inference logic the contract exists to forbid. A consumer that needs
   fleet state and sees `fleet_state: null` should render "fleet state unavailable", not
   synthesize a guess.
 
 ### `fleet_fallback` — seat-occupancy-only availability fallback
 
-✅ Observed live (aggregator forced `doc: null`, real fleet-host probed):
+✅ Observed live (aggregator forced `doc: null`, real primary-host probed):
 
 ```json
 {
@@ -108,7 +108,7 @@ and `commands` on each host.
 ```
 
 The aggregator (`http://localhost:8095/fleet-state.json`) is the ONE producer of
-`fleet-state/1` (`fleet-aggregator/docs/fleet-state-contract.md`), and `readFleetState()` correctly
+`fleet-state/1` (the fleet-state contract), and `readFleetState()` correctly
 refuses to re-derive anything when it's unreachable — that's contract-correct, but it
 also leaves the device fully blind whenever the desktop aggregator process is down, for
 an always-on glanceable device. `fleet_fallback` is a narrow, explicitly degraded
@@ -122,13 +122,13 @@ availability fallback for exactly that gap:
   structurally distinct and mutually exclusive: exactly one of them is non-null at a
   time.
 - **Seat occupancy ONLY — no leaf/profile inference.** This probes the two known
-  fleet-host seats (`worker` :8081, `senior` :8080 — the same `MB_HOST` this service
+  the primary fleet host's seats (`worker` :8081, `senior` :8080 — the same `MB_HOST` this service
   already talks to for `mb.*` actions) directly via `GET /v1/models`, and reports
   `models[0].name` **verbatim**. It does not infer, derive, or guess a leaf/profile
   name (`chat`/`prod`/`q38h`/`dsv4f`/etc.) from that string via substring matching —
   that logic was deliberately deleted from this file (see the removal note at the
-  bottom of `mb.js`) and stays fleet-aggregator's job alone, forever
-  (`fleet-aggregator/tools/fleet_probe.py` — "one producer, many consumers").
+  bottom of `mb.js`) and stays the aggregator's job alone, forever
+  (per the fleet-state contract — "one producer, many consumers").
 - **`reachable` and `occupant` are independent, not collapsed.** A seat that answers
   200 with an empty `models` array is `up:true, occupant:null` — genuinely empty, not
   down. A seat that times out, refuses the connection, answers non-200, or returns
@@ -182,7 +182,7 @@ are not proposed for the schema. Everything previously invented here — `reacha
 | `switching.startedAtMs` / `elapsedMs` / `budgetMs` | server-computed; device never does clock math |
 | `lastResult` | terminal outcome of the most recent action this service fired |
 
-🔴 **Mid-flip, both fleet-host ports go down by design** (`profile.sh stop_all` tears
+🔴 **Mid-flip, both of the primary fleet host's ports go down by design** (`profile.sh stop_all` tears
 down before relaunching). A consumer should check `switching` (and, once wired,
 `fleet_state`'s `leaf.transition`) BEFORE reading `fleet_state`'s seat states as "down" —
 this was observed on hardware once already (`mb-slot_spec.md` amend log, 2026-08-13),
@@ -215,7 +215,7 @@ Two families, routed by whether `id` starts with `mb.`:
 fire a live leaf flip on a serving box immediately. During this session's own gate
 testing, someone set `CARTHING_ACTION_DRYRUN=1` on the **`curl` invocation** instead of
 the **service process's** environment — curl doesn't consult it, and it never reached the
-already-running systemd service, so a REAL flip ran against fleet-host. See the trap
+already-running systemd service, so a REAL flip ran against the primary fleet host. See the trap
 call-out below; this is why the flow changed.
 
 The action flow is now two calls:
@@ -287,7 +287,7 @@ the contract:
 | `mb.pcreate.start` | `cd ~ && ./pcreate.sh start` | 8188 | up (no completion phase — ComfyUI has no `/v1/chat/completions`) |
 | `mb.pcreate.stop` | `cd ~ && ./pcreate.sh stop` | 8188 | down |
 
-`ssh` is invoked via `execFile` argv (`['-o','BatchMode=yes','-o','ConnectTimeout=10','fleet-host', cmd]`)
+`ssh` is invoked via `execFile` argv (`['-o','BatchMode=yes','-o','ConnectTimeout=10', MB_SSH_HOST, cmd]`)
 — never a shell string — matching `server.js`'s own `spawnAction` discipline, and only
 after a valid `confirm_token` is presented. One in-flight `mb.*` op at a time;
 `profile.sh`'s `stop_all` makes concurrent flips destructive — unchanged, hardware-proven.

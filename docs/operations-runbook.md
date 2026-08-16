@@ -141,7 +141,7 @@ no visible error**. On vite@5 use `@vitejs/plugin-legacy@^5` (v8 demands vite@8)
 There is **no speaker**, so light is the only out-of-band signal. `scripts/backlight-daemon.mjs`
 has two inputs: it watches the daemon over the same WS protocol the device uses (sessions,
 permissions), and it polls `services/deviceinfo/server.js` (`:8791/state`, every 5s) for a failed
-fleet-host fleet action. Both feed one state machine that drives
+fleet action against the primary fleet host. Both feed one state machine that drives
 `/sys/class/backlight/aml-bl/brightness` (0–255) over `adb shell`.
 
 | State | Condition | Backlight |
@@ -246,7 +246,7 @@ exactly like every other key on the ask path. With no ask pending: `Enter` confi
 fleet action (armed by the same two-tap confirm the touch tiles use), M cycles the fleet view's
 three pages (SEATS → LEAVES → AUX), and the dial's *rotation* — once bridged, see below — moves the
 cursor. These three are wired through `onNav`/`onPage`/`onConfirm` in `useHardwareKeys.ts` and are
-active only while slot 3 (FLEET-HOST) is the displayed slot.
+active only while slot 3 (FLEET) is the displayed slot.
 
 Four guards in `device/src/useHardwareKeys.ts`, each preventing a real misfire:
 auto-repeat ignored (holding a button must not fire twice) · a **250 ms arm delay** after an ask
