@@ -1,5 +1,5 @@
 import type { FleetStateDoc, MbPcreate } from '../../deviceInfo'
-import { FILL_STYLE, STALE_S, iconUrl } from './shared'
+import { FILL_STYLE, STALE_S, iconUrl, primaryHost } from './shared'
 
 type Props = {
   doc: FleetStateDoc | null
@@ -22,7 +22,7 @@ type Props = {
  *  `host.aux[]` (tts-pocket/tts-qwen/asr-npu on the live producer), rendered
  *  by `state` same as seat tiles -- never a hardcoded `up` dot there. */
 export function AuxPage({ doc, pcreate, cursor, pending, onTileTap, isLatched }: Props) {
-  const host = doc?.hosts.find((h) => h.id === 'fleet-host') ?? null
+  const host = primaryHost(doc ?? null)
   const actionId = pcreate.up ? 'mb.pcreate.stop' : 'mb.pcreate.start'
   const isPending = pending === actionId
   const latched = isLatched(actionId)

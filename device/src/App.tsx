@@ -11,6 +11,11 @@ import { ControlSlot } from './components/ControlSlot'
 import { useHardwareKeys } from './useHardwareKeys'
 import { useDeviceInfo } from './deviceInfo'
 import type { FleetNavHandlers } from './components/MbSlot'
+import { DEMO_FORCED, useDemoMode } from './demo/demoMode'
+import { demoDaemonState } from './demo/demoState'
+import { demoDeviceInfo } from './demo/fixtures.deviceInfo'
+import { inertAction } from './demo/inert'
+import { DemoToast } from './demo/DemoToast'
 
 const EMPTY: State = { connected: false, snapshot: null, asks: [], usage: null, offsetMs: 0, lastAskBySession: {} }
 
@@ -28,13 +33,18 @@ export default function App() {
   // MbSlot (slot 3) owns fleet page/cursor/confirm state and writes fresh
   // handlers here every render while mounted -- see MbSlot.tsx. Read only
   // from the activeSlot===3 guards below, so a dial/M press reaching a
-  // different slot can never silently drive a fleet-host action offscreen.
+  // different slot can never silently drive a primary-host action offscreen.
   const fleetNavRef = useRef<FleetNavHandlers | null>(null)
 
   useEffect(() => {
-    const d = (daemon.current = new Daemon())
-    d.onState = setState
-    d.connect()
+    // 🔴 DEMO GUARD, WebSocket half: forced demo never opens the daemon
+    // socket at all (no connection to :8790). Automatic demo still connects,
+    // because a daemon showing up is precisely what ends automatic demo.
+    if (!DEMO_FORCED) {
+      const d = (daemon.current = new Daemon())
+      d.onState = setState
+      d.connect()
+    }
     // One interval for the app lifetime, purely to advance countdowns.
     // Never key an effect on snapshot.serverNowMs — the daemon recomputes it
     // per snapshot, which caused React #185 (max update depth) on the device.
@@ -42,8 +52,16 @@ export default function App() {
     return () => clearInterval(t)
   }, [])
 
-  const ask = state.asks[0]
-  const nowMs = Date.now() + state.offsetMs
+  // ---- DEMO MODE: the ONE data-source swap (ruling 1). Everything below
+  // reads `view`/`info`, so every page component renders demo data through
+  // exactly the same props as live data and needs no demo branch of its own.
+  const demo = useDemoMode(state.connected, deviceInfo.reachable, deviceInfo.data)
+  const nowMs = demo ? Date.now() : Date.now() + state.offsetMs
+  const view = demo ? demoDaemonState(nowMs) : state
+  const info = demo ? demoDeviceInfo(nowMs) : deviceInfo.data
+  const infoReachable = demo ? true : deviceInfo.reachable
+
+  const ask = view.asks[0]
 
   // A pending ask always wins over the detail view — this device exists to
   // answer these, and a detail view left open must never blind it to one.
@@ -54,18 +72,22 @@ export default function App() {
     if (ask) setOpenSessionId(null)
   }, [ask?.id])
 
-  const sessions = state.snapshot?.sessions ?? []
+  const sessions = view.snapshot?.sessions ?? []
   const selectedSession = openSessionId ? sessions.find((s) => s.id === openSessionId) : undefined
   // The queue's own live ask for the tapped session, if any — takes priority
   // over the cached one in SessionDetail's routing.
-  const detailLiveAsk = selectedSession ? state.asks.find((a) => a.sessionId === selectedSession.id) : undefined
+  const detailLiveAsk = selectedSession ? view.asks.find((a) => a.sessionId === selectedSession.id) : undefined
   // Whichever ask is actually on screen right now: the detail's, if a detail
   // is open, else the top-level auto-popup's.
   const activeAsk = selectedSession ? detailLiveAsk : ask
 
   const onPermission = (requestId: string, decision: 'allow' | 'deny') => {
     const target = activeAsk?.id === requestId ? activeAsk : undefined
-    if (target) void daemon.current?.answer(target, decision)
+    if (!target) return
+    // 🔴 DEMO GUARD, answer half: no daemon request is issued — the tap gets
+    // a visible "not sent" notice instead of doing nothing silently.
+    if (inertAction(`${decision} · ${target.sessionName}`)) return
+    void daemon.current?.answer(target, decision)
   }
   // Single source of truth for slot switching — passed to both the hardware
   // keys and the on-screen TopBar, never duplicated between them.
@@ -97,7 +119,7 @@ export default function App() {
   // Only lamps backed by real state: connection, and plan-limit pressure
   // (any limit at or past 90%) — no MCP-health/disk lamps until that data
   // exists (slice 3).
-  const limitPressure = state.usage?.limits?.some((l) => l.used >= 0.9) ?? false
+  const limitPressure = view.usage?.limits?.some((l) => l.used >= 0.9) ?? false
 
   return (
     <div className="flex h-screen w-screen flex-col bg-stone-950 text-stone-50">
@@ -108,8 +130,9 @@ export default function App() {
         activeSlot={activeSlot}
         onSelect={onSlotChange}
         limitPressure={limitPressure}
-        connected={state.connected}
-        waitingCount={state.asks.length - 1}
+        connected={view.connected}
+        waitingCount={view.asks.length - 1}
+        demo={demo}
       />
 
       <main className="min-h-0 flex-1">
@@ -117,7 +140,7 @@ export default function App() {
           <SessionDetail
             session={selectedSession}
             liveAsk={detailLiveAsk}
-            cachedAsk={state.lastAskBySession[selectedSession.id]}
+            cachedAsk={view.lastAskBySession[selectedSession.id]}
             nowMs={nowMs}
             onPermission={onPermission}
             flash={flash}
@@ -130,17 +153,20 @@ export default function App() {
         ) : activeSlot === 1 ? (
           <SessionGrid sessions={sessions} nowMs={nowMs} onSelect={setOpenSessionId} />
         ) : activeSlot === 2 ? (
-          <FleetSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
+          <FleetSlot info={info} reachable={infoReachable} />
         ) : activeSlot === 3 ? (
-          <MbSlot info={deviceInfo.data} reachable={deviceInfo.reachable} navHandlersRef={fleetNavRef} />
+          <MbSlot info={info} reachable={infoReachable} navHandlersRef={fleetNavRef} />
         ) : (
-          <ControlSlot info={deviceInfo.data} reachable={deviceInfo.reachable} />
+          <ControlSlot info={info} reachable={infoReachable} />
         )}
       </main>
 
       {/* Hidden while an ask or the detail view is up — answering/reading is
           the whole screen's job then. */}
-      {!ask && !selectedSession && <UsageRail usage={state.usage} />}
+      {!ask && !selectedSession && <UsageRail usage={view.usage} />}
+
+      {/* Demo only: the "your tap went nowhere, and here's why" notice. */}
+      <DemoToast />
     </div>
   )
 }

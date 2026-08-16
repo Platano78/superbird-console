@@ -1,5 +1,5 @@
 import type { FleetHost } from '../../deviceInfo'
-import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets } from './shared'
+import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets, primaryHost } from './shared'
 
 // Existing mb-tile art for the five daily leaves. q38/q38h have no dedicated
 // art yet -- reuse the closest existing set (they're visually distinguished
@@ -98,7 +98,7 @@ function LeafTile({ id, active, loading, actionId, isCursor, isPending, isLatche
  *  READY-FOR-DUTY, q38h additionally toned as uncensored (Ruling 7, still a
  *  device-side theme convention, see shared.ts). */
 export function LeavesPage({ doc, cursor, pending, onTileTap, isLatched }: Props) {
-  const host: FleetHost | null = doc?.hosts.find((h) => h.id === 'fleet-host') ?? null
+  const host: FleetHost | null = primaryHost(doc ?? null)
   const leaves = orderedFlipTargets(host)
   const loading = hostLoading(host)
 

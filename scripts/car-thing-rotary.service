@@ -8,6 +8,9 @@ WorkingDirectory=%h/project/car-thing
 # systemd user services do NOT inherit the shell PATH — see claude-thing.service
 # for the same gotcha. Node must be reachable by absolute PATH entry.
 Environment=PATH=%h/.local/bin:%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+# Host config (CAR_THING_SERIAL, CAR_THING_ADB) -- written by scripts/setup.sh.
+# Leading '-' makes a missing file tolerated, not an error.
+EnvironmentFile=-%h/project/car-thing/superbird.conf
 ExecStart=%h/.nvm/versions/node/v22.22.3/bin/node scripts/rotary-bridge.mjs
 Restart=always
 RestartSec=5

@@ -1,5 +1,5 @@
 import type { FleetStateDoc, FleetThermalStatus } from '../../deviceInfo'
-import { STALE_S } from './shared'
+import { STALE_S, primaryHost } from './shared'
 
 const STATUS_TONE: Record<FleetThermalStatus, string> = {
   ok: 'text-emerald-400',
@@ -19,13 +19,13 @@ function StatTile({ label, value, unit }: { label: string; value: number | null;
   )
 }
 
-/** THERMALS — new page (task item 3). Fleet-host has zero fan tachometers
+/** THERMALS — new page (task item 3). The primary fleet host has zero fan tachometers
  *  and no OS-controllable PWM (verified 2026-08-15, BIOS/EC owns the curve),
  *  so `fan_rpm`/`pwm_pct` are null BY DESIGN, never rendered as a dead gauge
  *  or "N/A" -- switch on `fan_control` instead. Monitor-only: no navigable
  *  items (itemCountFor('thermals', ...) === 0). */
 export function ThermalsPage({ doc }: { doc: FleetStateDoc | null }) {
-  const host = doc?.hosts.find((h) => h.id === 'fleet-host') ?? null
+  const host = primaryHost(doc ?? null)
   const t = host?.thermals ?? null
 
   if (!t) {

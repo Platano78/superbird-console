@@ -1,5 +1,5 @@
 import type { FleetHost, FleetSeat, FleetStateDoc } from '../../deviceInfo'
-import { STALE_S, heraldActive, heraldCapable, leafDisplayName, secondaryHosts, truncateOccupant } from './shared'
+import { STALE_S, heraldActive, heraldCapable, leafDisplayName, primaryHost, secondaryHosts, truncateOccupant } from './shared'
 
 /** Known seats first (worker, senior) in that order, then anything else the
  *  contract adds (e.g. worker2) in document order — additive evolution
@@ -133,8 +133,8 @@ function SeniorSeatTile({
   )
 }
 
-/** Compact monitoring-only chip for a non-primary host (secondary-host,
- *  router-5080) -- `commands.flip: []` there means no flip control, ever
+/** Compact monitoring-only chip for a non-primary host (secondary hosts)
+ *  -- `commands.flip: []` there means no flip control, ever
  *  (task item 4: "at minimum the SEATS page must not assume a single
  *  host"). No cursor/confirm reaches these -- itemCountFor never counts them. */
 function SecondaryHostChip({ host }: { host: FleetHost }) {
@@ -162,10 +162,10 @@ type Props = {
 
 /** SEATS — the default/rest page. Primary host's seats as the persistent
  *  objects (worker/senior/whatever the contract adds), rendered by `state`,
- *  never the old collapsed `up` boolean. Secondary hosts (secondary-host,
- *  router-5080) render as read-only monitoring chips underneath. */
+ *  never the old collapsed `up` boolean. Secondary hosts render as
+ *  read-only monitoring chips underneath. */
 export function SeatsPage({ doc, cursor, pending, onTileTap, isLatched }: Props) {
-  const host = doc?.hosts.find((h) => h.id === 'fleet-host') ?? null
+  const host = primaryHost(doc ?? null)
   if (!host) {
     return (
       <div className="flex h-full flex-col items-center justify-center">

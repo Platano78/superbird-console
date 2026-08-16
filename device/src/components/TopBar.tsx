@@ -35,13 +35,18 @@ type Props = {
   limitPressure: boolean
   connected: boolean
   waitingCount: number
+  /** 🔴 Fixture data is on screen. The badge below is the ONE thing standing
+   *  between a viewer and mistaking demo data for their live fleet, so it
+   *  lives in this always-rendered bar (it survives an ask stealing the
+   *  screen and every slot change) and is never conditional on the page. */
+  demo?: boolean
 }
 
-export function TopBar({ activeSlot, onSelect, limitPressure, connected, waitingCount }: Props) {
+export function TopBar({ activeSlot, onSelect, limitPressure, connected, waitingCount, demo }: Props) {
   return (
     <div
       className="h-[40px] shrink-0 border-b border-stone-800 bg-stone-950"
-      style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr) auto' }}
+      style={{ display: 'grid', gridTemplateColumns: `repeat(4, 1fr) auto${demo ? ' auto' : ''}` }}
     >
       {SLOTS.map((label, i) => {
         const slot = i + 1
@@ -64,6 +69,11 @@ export function TopBar({ activeSlot, onSelect, limitPressure, connected, waiting
         <Lamp lit={connected} color="#34d399" label={connected ? 'online' : 'offline'} />
         {waitingCount > 0 && <span className="ml-3 text-xs text-amber-300">+{waitingCount} waiting</span>}
       </div>
+      {demo && (
+        <div className="flex items-center border-l border-stone-800 bg-amber-400 px-3 text-[11px] font-bold tracking-widest text-stone-950">
+          DEMO
+        </div>
+      )}
     </div>
   )
 }

@@ -13,11 +13,17 @@ let lastResult = null       // { id, ok, ms, error? } or null
 // simply replaces it.
 let pendingConfirm = null   // { id, token, createdAtMs, used }
 
-const MB_HOST = process.env.MB_HOST || '192.0.2.10'
+// Both OPTIONAL. The local LLM fleet is an add-on, not a requirement -- the
+// Claude-monitoring half of this service (sessions, permissions, disk, queue)
+// works with neither set. Unset means the feature is DISABLED, not a probe:
+// every function below checks these before making a network call or spawning
+// ssh, and never falls back to a guessed LAN address. Someone else's network
+// is not ours to poke at just because a var was left blank.
+const MB_HOST = process.env.MB_HOST || null
 // ssh alias for the fleet host, resolved from the invoking user's ssh config.
 // Deliberately an alias rather than a host: the user, port and key stay in ssh
 // config where they belong, and never appear in this repo.
-const MB_SSH_HOST = process.env.MB_SSH_HOST || 'fleet-host'
+const MB_SSH_HOST = process.env.MB_SSH_HOST || null
 const SOURCE_TIMEOUT_MS = 2000
 const CONFIRM_TOKEN_TTL_MS = 30_000
 
@@ -86,15 +92,17 @@ async function readMbState() {
   // `commands.services` (the ask in requirements §2.2).
   // Gate is ANY HTTP answer at `/`: ComfyUI has no /health (a 404 there read
   // as "never up" and false-failed a real pcreate.start at 180s).
-  const pcreate = await probeAnyHttp(8188)
+  // MB_HOST unset -> no probe at all; report unconfigured, not offline.
+  const pcreate = MB_HOST ? await probeAnyHttp(8188) : false
   return {
     switching: sw ? { id: sw.id, target: sw.target, phase: sw.phase, startedAtMs: sw.startedAt, elapsedMs, budgetMs: sw.budgetMs } : null,
     lastResult,
-    pcreate: { up: pcreate, port: 8188, probedAtMs: Date.now() },
+    pcreate: { up: pcreate, port: 8188, probedAtMs: MB_HOST ? Date.now() : null, configured: Boolean(MB_HOST) },
   }
 }
 
-/** ANY HTTP answer counts as up -- see the pcreate note in readMbState. */
+/** ANY HTTP answer counts as up -- see the pcreate note in readMbState.
+ *  Caller must already have checked MB_HOST is set. */
 async function probeAnyHttp(port) {
   try {
     await fetchWithTimeout(`http://${MB_HOST}:${port}/`, SOURCE_TIMEOUT_MS)
@@ -109,7 +117,7 @@ async function probeAnyHttp(port) {
  * `doc` is the fleet-state/1 document VERBATIM (unknown keys untouched --
  * contract law 7, additive evolution) when the aggregator answered with a
  * valid JSON object; otherwise `doc` is null and `error` names the reason.
- * No fallback to probing fleet-host directly if this fails -- that would
+ * No fallback to probing the fleet host directly if this fails -- that would
  * resurrect the duplicate leaf-inference logic the contract forbids.
  */
 async function readFleetState() {
@@ -167,9 +175,14 @@ const FALLBACK_SEATS = [
  */
 async function readFleetFallback(doc) {
   if (doc) return null
+  // MB_HOST unset -> the fleet box isn't configured at all, so there is
+  // nothing to fall back TO. No probe -- same "unset = disabled" rule as
+  // every other MB_HOST consumer in this file.
+  if (!MB_HOST) return { probedAtMs: Date.now(), seats: [], configured: false }
   const results = await Promise.allSettled(FALLBACK_SEATS.map((s) => probeSeatOccupant(s.port)))
   return {
     probedAtMs: Date.now(),
+    configured: true,
     seats: FALLBACK_SEATS.map((s, i) => {
       const r = results[i]
       // reachable/occupant are independent: a live server with an empty
@@ -221,6 +234,12 @@ async function probeSeatOccupant(port) {
  * environment can suppress execution.
  */
 async function runMbAction(id, opts = {}) {
+  // Unset MB_HOST/MB_SSH_HOST = feature disabled. Reject before touching the
+  // allowlist, `switching`, or the network -- no ssh, no probe, no confirm
+  // token issued for an action that could never run.
+  if (!MB_HOST || !MB_SSH_HOST) {
+    return { error: 'fleet not configured (set MB_HOST and MB_SSH_HOST)' }
+  }
   const ACTION_ALLOWLIST = {
     'mb.profile.chat':    { cmd: 'cd ~ && ./profile.sh chat',    ports: [8081], verifyType: 'completion' },
     'mb.profile.prod':    { cmd: 'cd ~ && ./profile.sh prod',    ports: [8081], verifyType: 'completion' },

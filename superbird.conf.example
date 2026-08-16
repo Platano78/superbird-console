@@ -1,0 +1,55 @@
+# Car Thing / superbird-console environment config.
+#
+# ⚠ This file must be RENAMED to `.superbird.conf.example` before publishing -- it is
+# named `superbird.conf.example` (no leading dot) only because this build environment's
+# sandbox hard-blocks every filesystem operation on a `.env*` path, including
+# creating a template with no real secrets in it. `scripts/setup.sh` writes
+# the real, gitignored `.env` (see .gitignore) the same way any other tool
+# would -- that restriction is specific to the environment this file was
+# authored in, not to the shipped repo.
+#
+# Copy to .env (or let `scripts/setup.sh` do it) and fill in what applies.
+# `.env` is gitignored -- nothing here is meant to be committed with real
+# values. See INSTALL.md for how this file gets loaded, and
+# docs/operations-runbook.md's Configuration section for what each service
+# does with these.
+
+# --- REQUIRED -----------------------------------------------------------
+# Both are auto-detected by `scripts/setup.sh` -- you shouldn't need to look
+# these up by hand. Set them here only if detection was ambiguous or you're
+# overriding it.
+
+# adb serial of the Car Thing device. Only needed once a SECOND adb device
+# (e.g. a phone) is ever attached to the same adb server -- with exactly one
+# device attached, this can stay unset.
+CAR_THING_SERIAL=
+
+# Path to the adb binary that can see the device. Plain 'adb' on PATH works
+# on Linux. On WSL2 the device is on the WINDOWS usb bus, so this must point
+# at the Windows adb.exe, e.g.:
+CAR_THING_ADB=/mnt/c/Users/YOURNAME/AppData/Local/Android/Sdk/platform-tools/adb.exe
+
+# --- OPTIONAL: local LLM fleet -------------------------------------------
+# Unset = the fleet screen reports itself unconfigured; nothing is probed.
+# The Claude-monitoring half of this project (sessions, permissions) works
+# fully with all three of these left blank.
+
+# LAN host or IP running your fleet box (llama.cpp router + optional
+# senior/pcreate lanes). Example uses an RFC 5737 documentation address --
+# put your real host here, never commit a real one.
+MB_HOST=192.0.2.10
+
+# ssh alias (NOT a bare hostname) for firing fleet actions, resolved from
+# your own ~/.ssh/config -- user, port and key stay there, never here.
+MB_SSH_HOST=fleet-box
+
+# LAN host or IP running a second, always-on generalist model probed for the
+# FLEET screen's health lamp.
+CODER_HOST=192.0.2.20
+
+# --- OPTIONAL: CONTROL grid -----------------------------------------------
+# Directory holding YOUR OWN fleet-control scripts (router-control.sh,
+# start-router.sh) -- substituted into services/deviceinfo/buttons.json's
+# `${CONTROL_SCRIPTS_DIR}` tokens. Unset = those CONTROL buttons fail
+# per-press with ENOENT instead of doing anything.
+CONTROL_SCRIPTS_DIR=/home/YOURNAME/fleet-scripts

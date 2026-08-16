@@ -1,0 +1,18 @@
+# Host-specific config written by scripts/setup.sh. Never personal values in
+# source -- see superbird.conf.example and INSTALL.md.
+#
+# Deliberately NOT named ".env": this file holds a device serial and a couple
+# of LAN hostnames, not credentials, and ".env" both overstates that and is
+# blanket-blocked by some agent/tooling sandboxes -- which makes a config file
+# your own tools cannot read or maintain. Same KEY=VALUE format either way;
+# systemd's EnvironmentFile= does not care what it is called.
+/superbird.conf
+
+# Also ignored: the conventional dotenv name. This project does NOT use it,
+# but ignoring it is cheap insurance -- dropping the rule when the config was
+# renamed is exactly how a real local config got swept into a commit by a
+# bulk `git add` here on 2026-08-15. Ignore both names; stage explicitly.
+/.env
+/.env.*
+
+node_modules/
