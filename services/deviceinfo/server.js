@@ -33,15 +33,19 @@ const ROUTER_URL = 'http://127.0.0.1:8081/v1/models'
 // endpoint the session-start fleet probe uses; match it.
 const CODER_HOST = process.env.CODER_HOST || null
 const CODER_URL = CODER_HOST ? `http://${CODER_HOST}:8084/health` : null
-// Sibling projects in the same workspace, not part of this repo -- derived
-// from this file's own location (never a hardcoded home) so the service
-// still finds them if the workspace is cloned somewhere else, and degrades
-// to the honest "unavailable" state documented at the top of this file if
-// they don't exist at all (e.g. this repo checked out standalone).
-const WORKSPACE_ROOT = path.join(__dirname, '..', '..', '..')
-const QUEUE_ROOT = path.join(WORKSPACE_ROOT, 'piplay', 'pi-harness', '.pi', 'queue')
+// BOTH OPTIONAL, and deliberately NOT derived from this file's location.
+// These point at projects that are not part of this repo. Deriving them from
+// __dirname looked layout-independent but was not: it hardcoded one
+// workspace's sibling directory NAMES, which are meaningless in any other
+// checkout -- so the path could only ever resolve for its author, and silently
+// missed for everyone else. Unset means nobody has one, exactly like
+// CODER_HOST above: the block reports the honest unavailable state documented
+// at the top of this file, never a fabricated zero.
+//   QUEUE_ROOT          dir holding the six state dirs named in QUEUE_DIRS
+//   OBLIGATIONS_SCRIPT  script answering `<script> status` on stdout
+const QUEUE_ROOT = process.env.QUEUE_ROOT || null
 const QUEUE_DIRS = ['pending', 'in-progress', 'done', 'review', 'escalated', 'failed']
-const OBLIGATIONS_SCRIPT = path.join(WORKSPACE_ROOT, '_standards', 'obligations', 'obligations.py')
+const OBLIGATIONS_SCRIPT = process.env.OBLIGATIONS_SCRIPT || null
 const OBLIGATIONS_CACHE_MS = 30_000
 
 // -- slice 5: CONTROL (model load/kill + device-info strip) --
@@ -155,8 +159,13 @@ async function readQueueCounts() {
   const out = {}
   for (const dir of QUEUE_DIRS) {
     const key = dir === 'in-progress' ? 'inProgress' : dir
+    if (!QUEUE_ROOT) {
+      out[key] = null
+      out[`${key}Error`] = 'QUEUE_ROOT not set'
+      continue
+    }
     try {
-      const entries = await fs.readdir(`${QUEUE_ROOT}/${dir}`)
+      const entries = await fs.readdir(path.join(QUEUE_ROOT, dir))
       out[key] = entries.filter((n) => !n.startsWith('.')).length
     } catch (err) {
       out[key] = null
@@ -180,6 +189,7 @@ function execFileTimeout(cmd, args, ms) {
  *  from the device) doesn't shell out on every hit. */
 let obligationsCache = { line: null, error: null, cachedAt: 0 }
 async function readObligations() {
+  if (!OBLIGATIONS_SCRIPT) return { line: null, error: 'OBLIGATIONS_SCRIPT not set', cachedAt: Date.now() }
   const age = Date.now() - obligationsCache.cachedAt
   if (obligationsCache.cachedAt && age < OBLIGATIONS_CACHE_MS) return obligationsCache
   try {
