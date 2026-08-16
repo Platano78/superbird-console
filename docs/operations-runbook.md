@@ -52,16 +52,24 @@ scripts) outside `car-thing` entirely via the `${CONTROL_SCRIPTS_DIR}` token in 
 `CONTROL_SCRIPTS_DIR` to enable those buttons, or leave it unset and they degrade to a per-press
 ENOENT (never a crash; see `loadButtons()` in `server.js`).
 
-## The two services (systemd --user)
+## The services (systemd --user)
 
-| Unit | Does |
-|---|---|
-| `claude-thing.service` | the daemon, from `~/claude-thing/daemon` |
-| `car-thing-adb.service` | re-asserts `adb reverse` every 30 s (`scripts/keep-adb-reverse.sh`) |
-| `car-thing-backlight.service` | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
+Three units ship in this repo and are installed by `scripts/setup.sh`. `claude-thing.service`
+is upstream's daemon, installed separately.
+
+| Unit | Ships here | Does |
+|---|---|---|
+| `claude-thing.service` | no — upstream | the daemon, from `~/claude-thing/daemon` |
+| `car-thing-deviceinfo.service` | yes | the `:8791` state/action service (`services/deviceinfo/server.js`) |
+| `car-thing-backlight.service` | yes | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
+| `car-thing-rotary.service` | yes | the host-side dial bridge (`scripts/rotary-bridge.mjs`) |
+
+⚠ `scripts/keep-adb-reverse.sh` re-asserts `adb reverse` every 30 s, but **no unit for it ships**
+— run it yourself, or wrap it in your own unit. Earlier revisions of this table listed a
+`car-thing-adb.service` that does not exist in this repo.
 
 ```bash
-systemctl --user status claude-thing.service car-thing-adb.service car-thing-backlight.service
+systemctl --user status claude-thing.service car-thing-deviceinfo.service car-thing-backlight.service
 systemctl --user restart claude-thing.service
 journalctl --user -u claude-thing.service -n 50 --no-pager
 curl -s http://127.0.0.1:8790/status        # the one-line health check
@@ -84,7 +92,8 @@ hooks-only — `sources` still lists `poller`, so trust `sessions` and the journ
 **Never run `claude-thing`'s `scripts/install-hooks.js`.** It rewrites `~/.claude/settings.json`
 wholesale and this box has a hand-tuned config. The by-hand installer that appends only, refuses
 to write if any existing entry would be lost, and backs up first:
-`scratchpad/install-hooks-by-hand.mjs` (reproduced below).
+`scripts/install-hooks-by-hand.mjs` (reproduced below). It was written in a session scratchpad
+and the old path lingered here after it moved into the repo.
 
 Seven `type:"http"` entries pointing at `http://127.0.0.1:8790/hook`:
 `PermissionRequest` (timeout 40), `SessionStart` 5, `SessionEnd` 3, `UserPromptSubmit` 5,
