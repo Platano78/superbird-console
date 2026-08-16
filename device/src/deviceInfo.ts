@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { DEMO_FORCED } from './demo/demoMode'
 
-// `ids` is the router's live model roster -- ControlSlot renders its tiles
-// from this, never from a hardcoded list (the roster changes).
+// `ids` is the router's live model roster. The CONTROL grid's tiles come from
+// buttons.json (host-side config), NOT from this -- the roster carries no
+// display name, icon or argv. `ids` is what tells a tile its preset still
+// exists: one naming a preset absent from a non-empty roster is rendered dead
+// rather than merely idle. Empty means "no opinion", never "all dead".
 // `loading` is the model id currently mid-load (router status.value ===
 // "loading"), or null when nothing is. Never inferred from a client-side
 // timer -- it ends only when /state reports the id has moved to `loaded`.

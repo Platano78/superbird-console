@@ -346,6 +346,7 @@ function ModelTile({
   pending,
   errorId,
   disabled,
+  roster,
   optimisticId,
   onTap,
 }: {
@@ -355,9 +356,20 @@ function ModelTile({
   pending: string | null
   errorId: string | null
   disabled: boolean
+  roster: string[]
   optimisticId: string | null
   onTap: (button: ButtonConfig) => void
 }) {
+  // A tile naming a preset the router does not have can NEVER light and its
+  // tap can only fail -- `router-control.sh switch` exits non-zero on an
+  // unknown preset. Observed 2026-08-16: the router renamed
+  // reasoning-qwen36-27b-mtp to ...qwen38..., and the renamed model loaded
+  // while its tile sat dark and tappable, indistinguishable from a model
+  // that simply was not running. Matching stays EXACT -- a fuzzy match would
+  // light the wrong box, which is worse than lighting none. An empty roster
+  // means "no opinion" (router down, or a service too old to send `ids`),
+  // never "every tile is dead".
+  const missing = button.expectedModel !== undefined && roster.length > 0 && !roster.includes(button.expectedModel)
   const isLoaded = button.expectedModel !== undefined && loaded === button.expectedModel
   const realLoading = button.expectedModel !== undefined && loading === button.expectedModel
   // Optimism only fills the gap BEFORE real state has an opinion -- once
@@ -371,7 +383,7 @@ function ModelTile({
     isError: errorId === button.id,
     isLoading,
     isLoaded,
-    disabled,
+    disabled: disabled || missing,
   })
   const style = TONE_STYLE[tone]
   const art = tone === 'loading' || tone === 'loaded' ? button.icons.active : button.icons.inactive
@@ -388,7 +400,11 @@ function ModelTile({
       <div className={`truncate font-semibold ${style.label}`} style={{ ...LABEL_SHADOW, fontSize: 12, lineHeight: 1.15 }}>
         {button.displayName}
       </div>
-      {tone === 'confirm' ? (
+      {missing ? (
+        <div className="mt-0.5 inline-block rounded-sm bg-stone-800 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-stone-500">
+          NO PRESET
+        </div>
+      ) : tone === 'confirm' ? (
         <div className={`text-[10px] font-bold uppercase tracking-wide ${style.sub}`} style={LABEL_SHADOW}>
           CONFIRM?
         </div>
@@ -669,7 +685,7 @@ export function ControlSlot({ info, reachable }: Props) {
     )
   }
 
-  const { loaded, loading, available, count, error } = info.fleet.router
+  const { loaded, loading, available, count, error, ids } = info.fleet.router
   const gridDisabled = !available
   // Purely cosmetic grid-line symmetry -- generic over however many
   // buttons the config carries, not a fixed "10 models + 2" assumption.
@@ -718,6 +734,7 @@ export function ControlSlot({ info, reachable }: Props) {
               pending={pending}
               errorId={errorId}
               disabled={gridDisabled}
+              roster={ids}
               optimisticId={optimistic?.id ?? null}
               onTap={onTap}
             />

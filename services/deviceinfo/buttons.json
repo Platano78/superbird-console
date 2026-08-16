@@ -170,14 +170,14 @@
       }
     },
     {
-      "id": "reasoning-qwen36-27b-mtp",
-      "displayName": "Q3.6 27B MTP",
+      "id": "reasoning-qwen38-27b-mtp",
+      "displayName": "Q3.8 27B MTP",
       "kind": "model",
-      "expectedModel": "reasoning-qwen36-27b-mtp",
+      "expectedModel": "reasoning-qwen38-27b-mtp",
       "argv": [
         "${CONTROL_SCRIPTS_DIR}/router-control.sh",
         "switch",
-        "reasoning-qwen36-27b-mtp"
+        "reasoning-qwen38-27b-mtp"
       ],
       "requiresRouter": true,
       "confirm": true,
