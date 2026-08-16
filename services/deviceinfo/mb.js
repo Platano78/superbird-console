@@ -88,7 +88,7 @@ module.exports = {
 //     survive as a shell metacharacter reaches the ssh command string.
 // Anything failing validation is refused BEFORE ssh is spawned.
 //
-// Verb contract (the fleet host's scripts/compose.sh): NDJSON on stdout,
+// Verb contract (fleet-host's scripts/compose.sh): NDJSON on stdout, prose on stderr,
 // exit 0 ok / 2 refused (nothing launched) / 3 launch-or-gate failure. Those
 // three are rendered differently on the device -- a refusal is the launcher
 // correctly declining, a gate failure means something was started and did not
