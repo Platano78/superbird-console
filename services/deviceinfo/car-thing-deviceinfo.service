@@ -4,15 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/project/car-thing
+WorkingDirectory=__REPO_ROOT__
 # systemd user services do NOT inherit the shell PATH -- see
 # scripts/car-thing-backlight.service for the same gotcha.
-Environment=PATH=%h/.local/bin:%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:__NODE_BIN_DIR__:/usr/local/bin:/usr/bin:/bin
 # Host config (CAR_THING_SERIAL, CAR_THING_ADB, and the optional MB_HOST /
 # MB_SSH_HOST / CODER_HOST / CONTROL_SCRIPTS_DIR) -- written by scripts/setup.sh.
 # Leading '-' makes a missing file tolerated, not an error.
-EnvironmentFile=-%h/project/car-thing/superbird.conf
-ExecStart=%h/.nvm/versions/node/v22.22.3/bin/node services/deviceinfo/server.js
+EnvironmentFile=-__REPO_ROOT__/superbird.conf
+ExecStart=__NODE_BIN__ services/deviceinfo/server.js
 Restart=always
 RestartSec=5
 # ⚠ LOAD-BEARING. Default KillMode=control-group kills EVERY process in the
