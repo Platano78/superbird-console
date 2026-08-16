@@ -41,8 +41,14 @@ line per systemd unit, an `enabled: ...` line, then a `Next steps:` block.
 `[setup] ERROR:` and exit non-zero — the message says exactly what to do (install adb, plug in
 the device, or set `CAR_THING_SERIAL`/`CAR_THING_ADB` yourself in `superbird.conf`).
 
-**Running this as an agent** (no human to watch the ambiguous case): pass `--non-interactive` —
-identical detection, but it never blocks on input; every failure is a message + non-zero exit.
+The units in the repo are **templates** — `setup.sh` fills in this checkout's path and your
+`node` binary as it installs them into `~/.config/systemd/user/`. Copy them by hand and they
+will not start: the placeholders are left unfilled, and `setup.sh` fails loudly rather than
+install a unit still containing one. Clone anywhere you like; nothing assumes a directory layout.
+
+**Running this as an agent** (no human to watch the ambiguous case): the script never prompts,
+in any mode — every ambiguous case is a message + non-zero exit, never a blocked read.
+`--non-interactive` is accepted so an agent can say so explicitly.
 
 **Previewing without changing anything:**
 ```bash
@@ -109,7 +115,8 @@ lost. Hooks apply to sessions started **after** this runs.
 4. **Re-running setup is a no-op:**
    ```bash
    bash scripts/setup.sh
-   # expect: the ".env already exists -- leaving it untouched" line, no other file changes
+   # expect: the "<repo>/superbird.conf already exists -- leaving it untouched" line,
+   # no other file changes
    ```
 
 ## Troubleshooting

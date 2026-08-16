@@ -6,9 +6,11 @@
 #                                      enable the systemd --user units
 #   scripts/setup.sh --dry-run        print what it would do, change nothing
 #   scripts/setup.sh --non-interactive
-#                                      never prompt; fail with a clear message
-#                                      + non-zero exit if something can't be
-#                                      detected. This is the mode an agent uses.
+#                                      accepted for explicitness. This script
+#                                      never prompts in ANY mode -- every
+#                                      ambiguous case is a clear message and a
+#                                      non-zero exit, so it is agent-safe by
+#                                      construction rather than by flag.
 #
 # Idempotent: safe to run twice. Never overwrites an existing superbird.conf -- see
 # the write_env step below.
@@ -128,13 +130,21 @@ $SERIAL"
     ;;
 esac
 
+NODE_BIN="$(command -v node || true)"
+if [ -n "$NODE_BIN" ]; then
+  log "node: $NODE_BIN ($("$NODE_BIN" --version))"
+else
+  fail "no node found on PATH. Install Node.js >= 22 (the services need global fetch/WebSocket) and re-run."
+fi
+
 log "MB_HOST / MB_SSH_HOST / CODER_HOST / CONTROL_SCRIPTS_DIR are OPTIONAL (local LLM fleet add-on) -- left unset unless already present in the environment."
 
 if [ "$DRY_RUN" -eq 1 ]; then
   log "--dry-run: would write $ENV_FILE with:"
   log "  CAR_THING_SERIAL=$SERIAL"
   log "  CAR_THING_ADB=$ADB_BIN"
-  log "--dry-run: would install/enable systemd --user units into $SYSTEMD_USER_DIR"
+  log "--dry-run: would install/enable systemd --user units into $SYSTEMD_USER_DIR,"
+  log "--dry-run:   with __REPO_ROOT__=$REPO_ROOT and __NODE_BIN__=$NODE_BIN"
   log "--dry-run: nothing was changed."
   exit 0
 fi
@@ -165,8 +175,18 @@ UNITS=(
   "scripts/car-thing-rotary.service"
 )
 for unit in "${UNITS[@]}"; do
-  cp "$REPO_ROOT/$unit" "$SYSTEMD_USER_DIR/$(basename "$unit")"
-  log "installed $SYSTEMD_USER_DIR/$(basename "$unit")"
+  dest="$SYSTEMD_USER_DIR/$(basename "$unit")"
+  # The checked-in units are TEMPLATES. They used to carry one machine's repo
+  # path and an exact nvm node version, so they started for exactly one person
+  # and failed for everyone who cloned anywhere else.
+  sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" \
+      -e "s|__NODE_BIN_DIR__|$(dirname "$NODE_BIN")|g" \
+      -e "s|__NODE_BIN__|$NODE_BIN|g" \
+      "$REPO_ROOT/$unit" > "$dest"
+  if grep -q '__[A-Z_]*__' "$dest"; then
+    fail "unfilled placeholder left in $dest: $(grep -o '__[A-Z_]*__' "$dest" | sort -u | tr '\n' ' ')"
+  fi
+  log "installed $dest"
 done
 
 systemctl --user daemon-reload
