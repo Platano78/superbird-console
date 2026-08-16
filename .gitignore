@@ -16,3 +16,9 @@
 /.env.*
 
 node_modules/
+
+# Build output. `npm run build` in device/ emits both; neither was ignored,
+# so the first thing a fresh clone does after following INSTALL.md was leave
+# untracked build artifacts sitting in `git status`.
+device/dist/
+device/tsconfig.tsbuildinfo
