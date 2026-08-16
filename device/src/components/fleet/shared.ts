@@ -55,16 +55,49 @@ const ACTION_URL = 'http://127.0.0.1:8791/action'
 /** Fire an action: fast-poll then POST — fire-and-forget, same shape as
  *  MbSlot.tsx's own fireAction (each slot component keeps its own copy —
  *  the established pattern here, see ControlSlot.tsx's own iconUrl). */
-export function fireAction(id: string) {
+export function fireAction(id: string, extra?: Record<string, unknown>) {
   // 🔴 DEMO GUARD (ruling 4): in demo mode NOTHING is posted -- the tap
   // returns here, having published a visible "action not sent" notice.
   if (inertAction(id)) return
   requestFastPoll()
-  void fetch(ACTION_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id }),
-  })
+  void runTwoStep(id, extra)
+}
+
+/**
+ * 🔴 The mb.* two-step is the SERVER's contract, and the client must complete
+ * it. POST #1 returns a single-use `confirm_token` and deliberately executes
+ * NOTHING; POST #2 carries the token back and is what actually runs.
+ *
+ * This was a live defect from 2026-08-15 (`37171fe`, which added the token
+ * server-side) until 2026-08-16: the device only ever sent POST #1, so every
+ * leaf flip, herald summon and pcreate toggle fired from the fleet view was a
+ * silent no-op. Nothing caught it because each layer was individually correct
+ * -- the server safely declined to act without a token, the device latched its
+ * tile to "committed" the instant it posted, and `mb.switching` stayed null so
+ * the latch never cleared. A button that looks like it worked and does nothing
+ * is the exact failure this codebase keeps refusing.
+ *
+ * Non-mb ids (the buttons.json CONTROL grid) execute on POST #1 and return no
+ * token -- for those there is nothing to confirm and we stop after one.
+ */
+async function runTwoStep(id: string, extra?: Record<string, unknown>) {
+  const post = (body: Record<string, unknown>) =>
+    fetch(ACTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  try {
+    const first = await post({ id, ...extra })
+    const out = await first.json().catch(() => null)
+    const token = out && typeof out.confirm_token === 'string' ? out.confirm_token : null
+    if (!token) return
+    await post({ id, ...extra, confirm_token: token })
+    requestFastPoll()
+  } catch {
+    // Transport failure surfaces through /state (the action never lands and
+    // no `lastResult` appears) rather than a thrown promise nobody awaits.
+  }
 }
 
 /** Display names are THEME, wire ids are CONTRACT — leaf-deep renders LEAF-DEEP
