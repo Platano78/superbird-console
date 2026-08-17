@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.5.0] - 2026-08-16
 
 ### Changed
 - **`QUEUE_ROOT` and `OBLIGATIONS_SCRIPT` are now plain optional config vars**, not paths
