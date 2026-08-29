@@ -22,3 +22,4 @@ node_modules/
 # untracked build artifacts sitting in `git status`.
 device/dist/
 device/tsconfig.tsbuildinfo
+services/panel-gateway-token.txt

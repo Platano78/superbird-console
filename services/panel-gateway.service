@@ -1,0 +1,24 @@
+[Unit]
+Description=Car Thing panel gateway (token-checked LAN proxy in front of the claude-thing daemon + deviceinfo service)
+After=network.target claude-thing.service car-thing-deviceinfo.service
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_ROOT__
+# systemd user services do NOT inherit the shell PATH -- see
+# services/deviceinfo/car-thing-deviceinfo.service for the same gotcha.
+Environment=PATH=%h/.local/bin:__NODE_BIN_DIR__:/usr/local/bin:/usr/bin:/bin
+# Host config (PG_HOST, PG_PORT, PG_TOKEN_FILE) -- optional, see
+# docs/operations-runbook.md. Leading '-' makes a missing file tolerated.
+EnvironmentFile=-__REPO_ROOT__/superbird.conf
+ExecStart=__NODE_BIN__ services/panel-gateway/server.js
+Restart=always
+RestartSec=5
+# Same reasoning as car-thing-deviceinfo.service: default KillMode=control-group
+# would kill every process in this service's cgroup on stop/restart. This
+# service spawns nothing of its own, but KillMode=process is the safe default
+# for every unit in this repo -- see that unit's comment for the incident.
+KillMode=process
+
+[Install]
+WantedBy=default.target

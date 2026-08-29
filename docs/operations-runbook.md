@@ -57,8 +57,10 @@ ENOENT (never a crash; see `loadButtons()` in `server.js`).
 
 ## The services (systemd --user)
 
-Three units ship in this repo and are installed by `scripts/setup.sh`. `claude-thing.service`
-is upstream's daemon, installed separately.
+Four units ship in this repo. `claude-thing.service` is upstream's daemon, installed separately.
+`scripts/setup.sh` installs the other three (`car-thing-*`); `panel-gateway.service` was installed
+by hand following the same template substitution (`__REPO_ROOT__`/`__NODE_BIN__` etc.) — see the
+section below for its own commands.
 
 | Unit | Ships here | Does |
 |---|---|---|
@@ -66,6 +68,7 @@ is upstream's daemon, installed separately.
 | `car-thing-deviceinfo.service` | yes | the `:8791` state/action service (`services/deviceinfo/server.js`) |
 | `car-thing-backlight.service` | yes | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
 | `car-thing-rotary.service` | yes | the host-side dial bridge (`scripts/rotary-bridge.mjs`) |
+| `panel-gateway.service` | yes | the `:8793` token-checked LAN gateway (`services/panel-gateway/server.js`) — see below |
 
 ⚠ `scripts/keep-adb-reverse.sh` re-asserts `adb reverse` every 30 s, but **no unit for it ships**
 — run it yourself, or wrap it in your own unit. Earlier revisions of this table listed a
@@ -89,6 +92,43 @@ Healthy `/status` looks like:
 ⚠ **systemd user services do NOT inherit the shell PATH.** Without the explicit
 `Environment=PATH=` line the poller dies with `spawn claude ENOENT` and silently degrades to
 hooks-only — `sources` still lists `poller`, so trust `sessions` and the journal, not that field.
+
+## Panel gateway — LAN access for the wall panel (`:8793`)
+
+`services/panel-gateway/server.js` + the `panel-gateway.service` unit. A token-checking reverse
+proxy in front of the daemon (`:8790`) and deviceinfo (`:8791`), so the wall panel — a
+LAN WiFi device, not a cabled one — can reach both without `adb reverse`. Plain Node, zero npm
+dependencies, same precedent as `services/deviceinfo`. It does not modify either upstream.
+
+The prior security model (localhost + USB) was physical; a LAN client changes that, so this
+gateway requires `Authorization: Bearer <token>` on **every** request, HTTP and WebSocket upgrade
+alike, checked against the contents of the token file. **The token file is the entire trust
+boundary** — anyone who reads it can reach the daemon and deviceinfo exactly as if plugged in.
+Treat it like a credential: never commit it, never paste it in full into a committed doc, never
+log it. A missing/empty token file is a fatal startup error by design; the gateway will not run
+open.
+
+| Var | Required? | What it is |
+|---|---|---|
+| `PG_HOST` | Optional, default `0.0.0.0` | Listen address. |
+| `PG_PORT` | Optional, default `8793` | Listen port. |
+| `PG_TOKEN_FILE` | Optional, default `services/panel-gateway-token.txt` | Path to the bearer token (gitignored; mint your own if it doesn't exist). |
+
+Routing: `GET /status` and `GET /ws` (WebSocket upgrade) forward to `127.0.0.1:8790` verbatim;
+anything under `/deviceinfo/...` has that prefix stripped and forwards to `127.0.0.1:8791`;
+everything else is `404`. The `Authorization` header is stripped before forwarding — the upstream
+services never see it. The WebSocket path is a raw TCP splice (no frame parsing), so it carries
+the daemon's `/ws` protocol unmodified.
+
+```bash
+systemctl --user enable --now panel-gateway.service
+systemctl --user status panel-gateway.service --no-pager
+journalctl --user -u panel-gateway.service -n 50 --no-pager
+
+# verification (run from wherever the panel will connect from):
+curl -s -o /dev/null -w '%{http_code}\n' http://<host>:8793/status                                    # 401, no token
+curl -s -H "Authorization: Bearer $(cat services/panel-gateway-token.txt)" http://<host>:8793/status  # daemon's real /status JSON
+```
 
 ## Hooks — installed BY HAND
 
