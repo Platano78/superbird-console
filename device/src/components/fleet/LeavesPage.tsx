@@ -12,11 +12,14 @@ import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, lea
 // icon_mb_chat_active.png. The one lit tile on the page was wearing CHAT's
 // face. Borrowing art is worse than having none: an unfamiliar dark tile reads
 // as "no art for this yet", a familiar one reads as the wrong leaf.
+// leaf-solo has its own art now, so the art-less path is for the NEXT leaf
+// added without any -- keep it that way rather than reinstating a fallback.
 const LEAF_ICONS: Record<string, { active: string; inactive: string }> = {
   chat: { active: 'icon_mb_chat_active.png', inactive: 'icon_mb_chat_inactive.png' },
   prod: { active: 'icon_mb_prod_active.png', inactive: 'icon_mb_prod_inactive.png' },
   pair: { active: 'icon_mb_pair_active.png', inactive: 'icon_mb_pair_inactive.png' },
   leaf-deep: { active: 'icon_mb_leaf-deep_active.png', inactive: 'icon_mb_leaf-deep_inactive.png' },
+  leaf-solo: { active: 'icon_mb_leaf-solo_active.png', inactive: 'icon_mb_leaf-solo_inactive.png' },
   swarm: { active: 'icon_mb_swarm_active.png', inactive: 'icon_mb_swarm_inactive.png' },
   leaf-mid: { active: 'icon_qwen35_active.png', inactive: 'icon_qwen35_off.png' },
   leaf-alt: { active: 'icon_qwen35_35b_active.png', inactive: 'icon_qwen35_35b_off.png' },
