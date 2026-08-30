@@ -4,6 +4,14 @@ import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, lea
 // Existing mb-tile art for the five daily leaves. leaf-mid/leaf-alt have no dedicated
 // art yet -- reuse the closest existing set (they're visually distinguished
 // by border tone + the RFD/UNCENSORED labels below, not by unique art).
+//
+// A leaf with NO entry here renders art-less (see LeafTile) rather than
+// borrowing another leaf's. There used to be a `?? LEAF_ICONS.chat` fallback,
+// which was invisible while every flip target had art -- then `leaf-solo`
+// joined the roster on 2026-08-30 and, being the ACTIVE leaf, drew
+// icon_mb_chat_active.png. The one lit tile on the page was wearing CHAT's
+// face. Borrowing art is worse than having none: an unfamiliar dark tile reads
+// as "no art for this yet", a familiar one reads as the wrong leaf.
 const LEAF_ICONS: Record<string, { active: string; inactive: string }> = {
   chat: { active: 'icon_mb_chat_active.png', inactive: 'icon_mb_chat_inactive.png' },
   prod: { active: 'icon_mb_prod_active.png', inactive: 'icon_mb_prod_inactive.png' },
@@ -63,8 +71,8 @@ function LeafTile({ id, active, loading, actionId, isCursor, isPending, isLatche
         : isUncensored
           ? 'border-red-800'
           : 'border-stone-800'
-  const icons = LEAF_ICONS[id] ?? LEAF_ICONS.chat
-  const art = active ? icons.active : icons.inactive
+  const icons = LEAF_ICONS[id]
+  const art = icons ? (active ? icons.active : icons.inactive) : null
   const scrimAlpha = isPending ? 0.4 : active ? 0.45 : loading ? 0.75 : 0.68
 
   return (
@@ -75,9 +83,12 @@ function LeafTile({ id, active, loading, actionId, isCursor, isPending, isLatche
         onTileTap(actionId)
       }}
     >
-      <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
+      {art && <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />}
       <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
-      {isReady && (
+      {/* RFD means "available outside the daily rotation", so it is a
+          contradiction on the leaf currently ON duty -- leaf-solo showed
+          both at once the first time a non-daily leaf went active. */}
+      {isReady && !active && (
         <div className="absolute right-1 top-1 rounded bg-stone-900 px-1 py-0.5 text-[8px] font-bold uppercase tracking-widest text-amber-300">
           RFD
         </div>
