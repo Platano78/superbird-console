@@ -58,8 +58,8 @@ This is not a guess: the stock Spotify webapp ships exactly this legacy pair
 (`index-legacy-*.js` + `polyfills-legacy-*.js`) for the same reason, and the same MIME error
 appears in the DeskThing client's own console on this device.
 
-The DeskThing-SDK app (`app/`) is superseded by `device/`. It is kept in-tree as the reference
-that proved the protocol end-to-end.
+The DeskThing-SDK app that first proved the protocol end-to-end is superseded by `device/`
+and is not included here -- this repository ships only the app that actually runs.
 
 ---
 

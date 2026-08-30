@@ -7,11 +7,7 @@ without touching a keyboard.
 
 Runs on **stock firmware**. No firmware fork, no reflash, no Bluetooth.
 
-![A permission prompt on the device: session payments-svc, Bash, "npm run migrate -- --env staging", with Deny and Allow buttons](docs/media/permission-card.png)
-
 *Claude Code asks; the device answers. Preset 1 allows, preset 4 denies, dial-press allows.*
-
-![The MB leaves page with a white cursor ring moving between model tiles as the dial turns](docs/media/dial-cursor.gif)
 
 *The dial moving the cursor. The encoder isn't visible to the browser at all — see Hardware below.*
 
@@ -32,11 +28,7 @@ Runs on **stock firmware**. No firmware fork, no reflash, no Bluetooth.
 - **Signals with light.** The device has no speaker, so the backlight is the out-of-band channel:
   it pulses when a prompt is waiting and pulses differently when a fleet action failed.
 
-![Four session dials showing context percentage, state and token counts](docs/media/sessions.png)
-
 *Sessions at a glance: context pressure, state, tokens in/out, and which one wants an answer.*
-
-![The MB leaves page, a grid of model tiles with cover art](docs/media/leaves.png)
 
 *Which models the serving box has loaded. Selecting one switches it — gated on a real completion,
 not an HTTP 200.*
@@ -106,9 +98,6 @@ Working on real hardware. The fleet view, permission answering, backlight signal
 rotary bridge are all verified on-device, not just in tests. Rough edges are recorded in
 `docs/` rather than hidden — including several defects that passed every automated gate and were
 only caught by looking at the panel.
-
-![The MB page with the fleet aggregator down: "AGGREGATOR UNREACHABLE", a dashed fallback box
-showing worker and senior seats, labelled "FALLBACK · SEATS ONLY"](docs/media/degraded-fallback.png)
 
 *What it looks like when the upstream aggregator is down. It shows the seats it can still see and
 says so — it does not invent a fleet, and configured-but-down never silently becomes demo data.*
