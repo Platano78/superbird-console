@@ -1,33 +1,7 @@
 import type { FleetHost } from '../../deviceInfo'
 import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets, primaryHost } from './shared'
+import { LEAF_ICONS } from './leafTheme'
 
-// Every leaf now has dedicated `icon_mb_<leaf>_{active,inactive}.png` art.
-// leaf-mid/leaf-alt used to borrow the router-model `icon_qwen35*` set, which shipped a
-// near-black `_off` state (measured value 0.9 and 21.3 of 255, against a
-// 50-76 band for every mb inactive): on the device both tiles rendered as
-// empty, reading as broken rather than available. Those files still exist and
-// are still used by demo/fixtures.buttons.ts -- do not delete them, just do
-// not borrow them here.
-//
-// A leaf with NO entry here renders art-less (see LeafTile) rather than
-// borrowing another leaf's. There used to be a `?? LEAF_ICONS.chat` fallback,
-// which was invisible while every flip target had art -- then `leaf-solo`
-// joined the roster on 2026-08-30 and, being the ACTIVE leaf, drew
-// icon_mb_chat_active.png. The one lit tile on the page was wearing CHAT's
-// face. Borrowing art is worse than having none: an unfamiliar dark tile reads
-// as "no art for this yet", a familiar one reads as the wrong leaf.
-// leaf-solo has its own art now, so the art-less path is for the NEXT leaf
-// added without any -- keep it that way rather than reinstating a fallback.
-const LEAF_ICONS: Record<string, { active: string; inactive: string }> = {
-  chat: { active: 'icon_mb_chat_active.png', inactive: 'icon_mb_chat_inactive.png' },
-  prod: { active: 'icon_mb_prod_active.png', inactive: 'icon_mb_prod_inactive.png' },
-  pair: { active: 'icon_mb_pair_active.png', inactive: 'icon_mb_pair_inactive.png' },
-  leaf-deep: { active: 'icon_mb_leaf-deep_active.png', inactive: 'icon_mb_leaf-deep_inactive.png' },
-  leaf-solo: { active: 'icon_mb_leaf-solo_active.png', inactive: 'icon_mb_leaf-solo_inactive.png' },
-  swarm: { active: 'icon_mb_swarm_active.png', inactive: 'icon_mb_swarm_inactive.png' },
-  leaf-mid: { active: 'icon_mb_leaf-mid_active.png', inactive: 'icon_mb_leaf-mid_inactive.png' },
-  leaf-alt: { active: 'icon_mb_leaf-alt_active.png', inactive: 'icon_mb_leaf-alt_inactive.png' },
-}
 
 type Props = {
   doc: import('../../deviceInfo').FleetStateDoc | null

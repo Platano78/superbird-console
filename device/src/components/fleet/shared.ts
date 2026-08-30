@@ -3,6 +3,7 @@ import type { FleetHost, FleetStateDoc } from '../../deviceInfo'
 import { requestFastPoll } from '../../deviceInfo'
 import { inertAction } from '../../demo/inert'
 import type { FleetPage } from '../../useFleetNav'
+import { DAILY_LEAVES, LEAF_DISPLAY_NAMES, UNCENSORED_LEAVES } from './leafTheme'
 
 /** The primary surface is chosen by ROLE, never by a hardcoded host id.
  *
@@ -100,25 +101,29 @@ async function runTwoStep(id: string, extra?: Record<string, unknown>) {
   }
 }
 
-/** Display names are THEME, wire ids are CONTRACT — leaf-deep renders LEAF-DEEP
- *  but stays leaf-deep in every action POST. */
+/** Display names are THEME, wire ids are CONTRACT — a leaf may render under
+ *  another name but stays its own id in every action POST. The mapping lives
+ *  in leafTheme.ts; every caller must come through HERE rather than inlining
+ *  its own copy. */
 export function leafDisplayName(id: string): string {
-  if (id === 'leaf-deep') return 'LEAF-DEEP'
-  return id.toUpperCase()
+  return LEAF_DISPLAY_NAMES[id] ?? id.toUpperCase()
 }
 
 // Grouping/tone below (daily vs "ready for duty", uncensored) is DEVICE-SIDE
-// theme, same footing as leafDisplayName's leaf-deep->LEAF-DEEP rename -- it is
-// NOT part of the contract (fleet-state/1 carries no tier field). The roster
-// itself always comes from `commands.flip`, never this list: an unrecognised
-// leaf name still renders, just falls into the "ready for duty" bucket by
-// default instead of crashing or being dropped.
-const DAILY_LEAVES = ['chat', 'prod', 'swarm', 'pair', 'leaf-deep']
+// theme -- NOT part of the contract (fleet-state/1 carries no tier field). The
+// roster itself always comes from `commands.flip`, never this list: an
+// unrecognised leaf name still renders, just falls into the "ready for duty"
+// bucket by default instead of crashing or being dropped.
 export function isReadyForDuty(id: string): boolean {
+  // An empty DAILY_LEAVES means the fleet draws no daily/rest distinction, so
+  // nothing is badged. Without this guard the negation inverts and EVERY tile
+  // would claim to be ready for duty -- loudest possible output from the
+  // emptiest possible config.
+  if (DAILY_LEAVES.length === 0) return false
   return !DAILY_LEAVES.includes(id)
 }
 export function isUncensoredLeaf(id: string): boolean {
-  return id === 'leaf-alt'
+  return UNCENSORED_LEAVES.includes(id)
 }
 
 /** `commands.flip` ordered dailies-first, then everything else in the order

@@ -4,7 +4,7 @@ import type { DeviceInfoState } from '../deviceInfo'
 import { useConfirmArm } from './fleet/useConfirmArm'
 import { useFireLatch } from './fleet/useFireLatch'
 import { useFailureBanner } from './fleet/useFailureBanner'
-import { itemCountFor, primaryHost, primaryHostTitle, resolveConfirmAction, truncateOccupant } from './fleet/shared'
+import { itemCountFor, leafDisplayName, primaryHost, primaryHostTitle, resolveConfirmAction, truncateOccupant } from './fleet/shared'
 import { useFleetNav } from '../useFleetNav'
 import { SeatsPage } from './fleet/SeatsPage'
 import { LeavesPage } from './fleet/LeavesPage'
@@ -105,7 +105,10 @@ export function MbSlot({ info, reachable, navHandlersRef }: Props) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
         <GaugeArc value={pct} tone="amber" size={140} />
-        <div className="-mt-1 text-xl font-semibold text-amber-400">SWITCHING → {target === 'leaf-deep' ? 'LEAF-DEEP' : target.toUpperCase()}</div>
+        {/* Was an inlined copy of leafDisplayName's rename. It survived a fix
+            to that function on 2026-08-30 and kept announcing the old name
+            while the box flipped to something else -- one mapping, one call. */}
+        <div className="-mt-1 text-xl font-semibold text-amber-400">SWITCHING → {leafDisplayName(target)}</div>
         <div className="mt-2 text-sm text-amber-400">{phase} · {Math.round(elapsedMs / 1000)}s</div>
       </div>
     )
