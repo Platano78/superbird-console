@@ -184,16 +184,25 @@ on the Car Thing, or it falls through to the normal terminal prompt.
 
 ```bash
 cd ~/project/car-thing/device && npm run build
-# stage to a Windows-reachable path, then push + restart the kiosk
 ```
 Device side (`/etc/supervisord.conf:51` already points at our app) — **run these as four
 SEPARATE invocations, never chained with `&&`** (see the guard note below):
 ```
 adb shell 'mount -o remount,rw /'
 adb shell 'rm -rf /usr/share/claude-thing/assets'
-adb push <dist>/. /usr/share/claude-thing/
+adb push device/dist/. /usr/share/claude-thing/
 adb shell supervisorctl restart chromium
 ```
+
+⚠ **Push straight from `device/dist/`. Do NOT stage a copy under `/mnt/c`.** This step used to
+read "stage to a Windows-reachable path", which was true only while the Windows `adb.exe` was
+invoked directly. `adb push` reads the local file in the **client** process, so now that one
+supervised Windows server serves the bus and WSL's own `/usr/bin/adb` is a client of it (see
+§"There is exactly ONE adb server"), a WSL path pushes fine — verified 2026-08-30, 41 files from
+`device/dist/.`. The staging copy was pure cost: 3.2 MB of duplicate build output per deploy, and
+the host security hook denies `rm` under `/mnt/c`, so nobody but the owner could ever remove it.
+A deploy step that litters a directory the agent is forbidden to clean is a step that accumulates
+litter forever.
 
 🔴 **Do NOT chain the adb steps with `&&`.** The damage-control hook
 (`~/.claude/hooks/damage-control/bash-tool-damage-control.py`, `is_adb_shell_command`)
