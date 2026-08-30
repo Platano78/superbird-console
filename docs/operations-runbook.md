@@ -187,12 +187,28 @@ cd ~/project/car-thing/device && npm run build
 ```
 Device side (`/etc/supervisord.conf:51` already points at our app) — **run these as four
 SEPARATE invocations, never chained with `&&`** (see the guard note below):
+Run from the repo root, with the serial written out literally (`DEVICESERIAL` on this box):
 ```
-adb shell 'mount -o remount,rw /'
-adb shell 'rm -rf /usr/share/claude-thing/assets'
-adb push device/dist/. /usr/share/claude-thing/
-adb shell supervisorctl restart chromium
+adb -s <CAR_THING_SERIAL> shell 'mount -o remount,rw /'
+adb -s <CAR_THING_SERIAL> shell 'rm -rf /usr/share/claude-thing/assets'
+adb -s <CAR_THING_SERIAL> push device/dist/. /usr/share/claude-thing/
+adb -s <CAR_THING_SERIAL> shell supervisorctl restart chromium
 ```
+
+⚠ **`-s <serial>` is required, not decoration.** These steps used to read bare `adb`, which worked
+only while the Car Thing was the sole device on the server. It no longer is: the LAN wall panel
+joins the same server by `adb connect` (see `ADB_NET_DEVICES`), so a bare `adb` aborts with
+`adb: more than one device/emulator` — measured 2026-08-30 running step 1 verbatim. Same trap
+`scripts/keep-adb-reverse.sh` already documents for `adb reverse`. The failure is loud, but the
+exit code is not: pipe it through anything and `$?` reports the pipeline's last command, so a
+scripted deploy sails straight past a step that did nothing.
+
+⚠ **Write the serial out; do NOT source `superbird.conf` in the same invocation.** The
+damage-control hook exempts `adb shell`/`adb push` from the host read-only-path guard, but that
+exemption bails on any command that is more than the adb call itself — the same reason `&&` is
+banned below. Prefixing `set -a; . ./superbird.conf; set +a` to get `$CAR_THING_SERIAL` is enough
+to lose it, and step 2 comes back as *"Blocked: delete operation on read-only path /usr/"* even
+though the path is on the device. Export the serial in the shell beforehand, or write it inline.
 
 ⚠ **Push straight from `device/dist/`. Do NOT stage a copy under `/mnt/c`.** This step used to
 read "stage to a Windows-reachable path", which was true only while the Windows `adb.exe` was
