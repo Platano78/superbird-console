@@ -1,0 +1,24 @@
+[Unit]
+Description=Keep adb reverse alive for the Car Thing kiosk
+After=claude-thing.service
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_ROOT__
+# ⚠ LOAD-BEARING. Without this the keeper runs with CAR_THING_SERIAL and
+# CAR_THING_ADB both unset, and both defaults are wrong on a WSL host:
+#   - CAR_THING_ADB falls back to plain `adb`, i.e. the WSL binary. The keeper
+#     then spawns a WSL adb server on 5037 every 30 s, the Windows adb.exe
+#     demotes itself to a client of it, and NOTHING serves the USB bus.
+#   - CAR_THING_SERIAL falls back to "match any attached device", so the Car
+#     Thing's reverse tunnels get asserted onto whatever else is connected.
+# Observed 2026-08-29: both at once. The Car Thing was invisible to every adb
+# server for a day while this unit sat green, and its tunnels were pointed at
+# the wall panel. Leading '-' makes a missing file tolerated.
+EnvironmentFile=-__REPO_ROOT__/superbird.conf
+ExecStart=/bin/sh __REPO_ROOT__/scripts/keep-adb-reverse.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -30,6 +30,18 @@ CAR_THING_SERIAL=
 # at the Windows adb.exe, e.g.:
 CAR_THING_ADB=/mnt/c/Users/YOURNAME/AppData/Local/Android/Sdk/platform-tools/adb.exe
 
+# --- OPTIONAL: other devices sharing this adb server ----------------------
+# Space-separated host:port of NETWORK-attached adb devices that should share
+# the same adb server as the Car Thing -- e.g. the wall panel, which
+# joins over WiFi with `adb connect` rather than by being plugged in.
+# `scripts/keep-adb-reverse.sh` re-asserts these every INTERVAL.
+#
+# There must only ever be ONE adb server. On WSL2 with mirrored networking a
+# Linux-side server and the Windows one both bind 127.0.0.1:5037 and fight;
+# the Windows one has to win, because it is the only one on the USB bus.
+# Listing LAN devices here is how they join that server instead of a rival.
+ADB_NET_DEVICES=
+
 # --- OPTIONAL: local LLM fleet -------------------------------------------
 # Unset = the fleet screen reports itself unconfigured; nothing is probed.
 # The Claude-monitoring half of this project (sessions, permissions) works

@@ -1,0 +1,38 @@
+[Unit]
+Description=Car Thing adb server (the single Windows adb server, supervised)
+Before=car-thing-adb.service claude-thing.service
+
+[Service]
+Type=simple
+# /mnt/c, not the repo: cmd/PowerShell interop refuses a UNC working directory
+# ("UNC paths are not supported. Defaulting to Windows directory").
+WorkingDirectory=/mnt/c
+
+# THE one adb server for this host. Everything else -- the keeper, backlight,
+# rotary, deviceinfo -- is a CLIENT of it.
+#
+# Why a unit, and why `nodaemon server` rather than `start-server`:
+# on WSL2 the Car Thing is on the WINDOWS USB bus, so only a Windows adb.exe
+# can serve it. But a Windows server started from WSL does not survive: the
+# interop parent goes away and the detached daemon dies with it. Measured
+# 2026-08-29 -- `adb.exe start-server`, `Start-Process`, and `cmd /c start /b`
+# all left nothing listening, while `adb.exe nodaemon server` ran happily in
+# the foreground for as long as it was held open. So hold it open: `nodaemon`
+# keeps the server in the foreground where systemd can supervise it, and
+# systemd is a parent that never exits.
+#
+# The failure this replaces: with no supervised Windows server, any client that
+# ran WSL's own /usr/bin/adb would spawn a LINUX server on 127.0.0.1:5037.
+# Under WSL2 mirrored networking that is the same port the Windows server
+# needs, so the Linux one won by arriving first and nothing served the USB bus
+# at all -- the Car Thing vanished from every adb server for a day while all
+# five units stayed green.
+# __ADB_BIN__ is CAR_THING_ADB's value, substituted at install time. It cannot
+# be read from superbird.conf at runtime: systemd expands variables in ExecStart
+# ARGUMENTS but never in the program name itself.
+ExecStart=__ADB_BIN__ nodaemon server
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -57,8 +57,8 @@ ENOENT (never a crash; see `loadButtons()` in `server.js`).
 
 ## The services (systemd --user)
 
-Four units ship in this repo. `claude-thing.service` is upstream's daemon, installed separately.
-`scripts/setup.sh` installs the other three (`car-thing-*`); `panel-gateway.service` was installed
+Six units ship in this repo. `claude-thing.service` is upstream's daemon, installed separately.
+`scripts/setup.sh` installs the `car-thing-*` ones; `panel-gateway.service` was installed
 by hand following the same template substitution (`__REPO_ROOT__`/`__NODE_BIN__` etc.) — see the
 section below for its own commands.
 
@@ -69,10 +69,37 @@ section below for its own commands.
 | `car-thing-backlight.service` | yes | the backlight attention channel (`scripts/backlight-daemon.mjs`) |
 | `car-thing-rotary.service` | yes | the host-side dial bridge (`scripts/rotary-bridge.mjs`) |
 | `panel-gateway.service` | yes | the `:8793` token-checked LAN gateway (`services/panel-gateway/server.js`) — see below |
+| `car-thing-adb.service` | yes | re-asserts `adb reverse` every 30 s (`scripts/keep-adb-reverse.sh`) |
+| `car-thing-adb-server.service` | yes | **the single adb server** — see below |
 
-⚠ `scripts/keep-adb-reverse.sh` re-asserts `adb reverse` every 30 s, but **no unit for it ships**
-— run it yourself, or wrap it in your own unit. Earlier revisions of this table listed a
-`car-thing-adb.service` that does not exist in this repo.
+### There is exactly ONE adb server, and it must be the Windows one
+
+On WSL2 the Car Thing is on the **Windows** USB bus, so only a Windows `adb.exe` can serve it.
+But WSL and Windows share `127.0.0.1:5037` under mirrored networking, so whichever server starts
+first owns the port — and if that is a Linux `adb`, **nothing** serves USB and the device is
+invisible to every client.
+
+`car-thing-adb-server.service` runs `adb.exe nodaemon server` under systemd. `nodaemon` is
+load-bearing: a Windows server started from WSL and detached dies with its interop parent
+(`start-server`, `Start-Process` and `cmd /c start /b` all leave nothing listening), so the
+server is held in the foreground where systemd can supervise it. Every other unit is a *client*
+of it — including WSL's own `/usr/bin/adb`, which reaches it over mirrored loopback.
+
+⚠ **Every adb consumer must point at `CAR_THING_ADB`, never a bare `adb`.** On 2026-08-29 the
+backlight and rotary units loaded a `.env` that pinned `CAR_THING_ADB=/usr/bin/adb`; both poll
+continuously, so they kept respawning a Linux server on 5037 and the Car Thing was unreachable
+for a day while all five units sat green. `car-thing-adb.service` had no `EnvironmentFile=` at
+all, so it also ran unpinned and asserted the Car Thing's reverses onto the wall panel
+instead. Check with:
+
+```bash
+tr '\0' '\n' < /proc/$(systemctl --user show car-thing-backlight.service -p MainPID --value)/environ | grep CAR_THING_ADB
+```
+
+`ADB_NET_DEVICES` in `superbird.conf` lists LAN devices (the wall panel) that the keeper
+re-`connect`s onto this same server. It **connects only** — reverses stay pinned to
+`CAR_THING_SERIAL`, deliberately: an un-tokened tunnel to `:8790` from a LAN panel would bypass
+the panel-gateway bearer-token check that is the entire trust boundary there.
 
 ```bash
 systemctl --user status claude-thing.service car-thing-deviceinfo.service car-thing-backlight.service
