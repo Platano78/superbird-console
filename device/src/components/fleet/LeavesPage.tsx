@@ -1,9 +1,13 @@
 import type { FleetHost } from '../../deviceInfo'
 import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets, primaryHost } from './shared'
 
-// Existing mb-tile art for the five daily leaves. leaf-mid/leaf-alt have no dedicated
-// art yet -- reuse the closest existing set (they're visually distinguished
-// by border tone + the RFD/UNCENSORED labels below, not by unique art).
+// Every leaf now has dedicated `icon_mb_<leaf>_{active,inactive}.png` art.
+// leaf-mid/leaf-alt used to borrow the router-model `icon_qwen35*` set, which shipped a
+// near-black `_off` state (measured value 0.9 and 21.3 of 255, against a
+// 50-76 band for every mb inactive): on the device both tiles rendered as
+// empty, reading as broken rather than available. Those files still exist and
+// are still used by demo/fixtures.buttons.ts -- do not delete them, just do
+// not borrow them here.
 //
 // A leaf with NO entry here renders art-less (see LeafTile) rather than
 // borrowing another leaf's. There used to be a `?? LEAF_ICONS.chat` fallback,
@@ -21,8 +25,8 @@ const LEAF_ICONS: Record<string, { active: string; inactive: string }> = {
   leaf-deep: { active: 'icon_mb_leaf-deep_active.png', inactive: 'icon_mb_leaf-deep_inactive.png' },
   leaf-solo: { active: 'icon_mb_leaf-solo_active.png', inactive: 'icon_mb_leaf-solo_inactive.png' },
   swarm: { active: 'icon_mb_swarm_active.png', inactive: 'icon_mb_swarm_inactive.png' },
-  leaf-mid: { active: 'icon_qwen35_active.png', inactive: 'icon_qwen35_off.png' },
-  leaf-alt: { active: 'icon_qwen35_35b_active.png', inactive: 'icon_qwen35_35b_off.png' },
+  leaf-mid: { active: 'icon_mb_leaf-mid_active.png', inactive: 'icon_mb_leaf-mid_inactive.png' },
+  leaf-alt: { active: 'icon_mb_leaf-alt_active.png', inactive: 'icon_mb_leaf-alt_inactive.png' },
 }
 
 type Props = {
