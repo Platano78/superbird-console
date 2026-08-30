@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.6.1] - 2026-08-30
+
+### Fixed
+- **The documented deploy procedure was wrong in three ways**, each invisible until the steps were
+  run verbatim rather than adapted on the way past:
+  - It told you to stage the build to a Windows-reachable path first. That was only true while a
+    Windows `adb.exe` was invoked directly — `adb push` reads the local file in the **client**
+    process, so with one adb server on the USB bus and a WSL `adb` acting as its client, pushing
+    straight from `device/dist/` works. The staging copy was duplicate build output per deploy,
+    in a directory the host's own security policy may forbid you from cleaning up.
+  - It used bare `adb`, which only worked while the device was alone on the adb server. Once a
+    LAN wall panel joins the same server (see `ADB_NET_DEVICES`), every bare `adb` aborts with
+    `more than one device/emulator` — the same trap `scripts/keep-adb-reverse.sh` documents for
+    `adb reverse`. The steps now carry `-s <serial>`. The failure is loud but the *exit code* is
+    not: pipe it and `$?` reports the pipeline, so a scripted deploy sails past a dead step.
+  - Sourcing `superbird.conf` to obtain that serial breaks the deploy a different way, and the
+    error blames the wrong thing. Noted inline, with the symptom, so it is recognisable.
+
 ## [0.6.0] - 2026-08-30
 
 ### Added
