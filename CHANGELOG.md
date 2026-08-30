@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here.
 
+## [0.6.0] - 2026-08-30
+
+### Added
+- **A token-checked LAN gateway (`:8793`)**, so a wall panel on WiFi can reach the daemon and the
+  device-info service without `adb reverse`. The previous security model was physical — everything
+  bound to `127.0.0.1` and reached over USB — and a LAN client changes that, so the gateway
+  requires `Authorization: Bearer <token>` on **every** request, HTTP and WebSocket upgrade alike.
+  The token file is the entire trust boundary; a missing or empty one is a fatal startup error by
+  design, because a gateway that silently runs open is worse than one that refuses to start.
+  Plain Node, no dependencies, and it does not modify either service it fronts.
+- **`car-thing-adb-server.service` — the single adb server**, and `car-thing-adb.service`, which
+  re-asserts `adb reverse`. Both now ship; previously the reverse keeper was documented as
+  "wrap it in your own unit".
+- **`ADB_NET_DEVICES`** in `superbird.conf` — network-attached devices that should share the same
+  adb server, re-connected every 30s. It **connects only**: reverse tunnels stay pinned to
+  `CAR_THING_SERIAL`, deliberately, because an un-tokened tunnel to the daemon from a LAN panel
+  would bypass the gateway's bearer-token check entirely.
+
+### Fixed
+- **On WSL2 there can be only one adb server, and it must be the Windows one** — otherwise the
+  cabled device is invisible to every client, including the Windows `adb.exe`, which silently
+  demotes itself to a client of whatever already holds `127.0.0.1:5037`. Mirrored networking makes
+  both sides share that port, and only the Windows server is on the USB bus. The new unit runs
+  `adb.exe nodaemon server` under systemd: a Windows server started from WSL and then detached
+  dies with its interop parent, so `start-server`, `Start-Process` and `cmd /c start /b` all leave
+  nothing listening. Held in the foreground, systemd supervises it and WSL's own `adb` rides it
+  transparently. Any consumer that shells a bare `adb` respawns a rival server and re-breaks the
+  device on a loop, so every unit is now pinned to `CAR_THING_ADB`.
+- **The reverse keeper logged nothing at all**, which let a dead device sit behind a green systemd
+  unit. It now logs presence/absence transitions and warns when a rival server holds the port.
+- **The active leaf could wear another leaf's artwork.** The leaf-tile icon map fell back to the
+  `chat` art for any leaf without its own, which was harmless while every flip target had art —
+  until a leaf that had none became the *active* one, and the single lit tile on the page started
+  drawing the `chat` icon. A leaf with no artwork now renders art-less: an unfamiliar dark tile
+  reads as "no art yet", a familiar one reads as the wrong leaf.
+- **A leaf could claim to be off duty while being on it.** The `RFD` badge means "available
+  outside the daily rotation", so it contradicts the active-leaf border; it is now suppressed on
+  the active tile.
+
 ## [0.5.0] - 2026-08-16
 
 ### Changed
