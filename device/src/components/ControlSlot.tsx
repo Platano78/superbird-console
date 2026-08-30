@@ -4,6 +4,9 @@ import { requestFastPoll } from '../deviceInfo'
 import { DEMO_FORCED, isDemoActive } from '../demo/demoMode'
 import { DEMO_BUTTONS } from '../demo/fixtures.buttons'
 import { inertAction } from '../demo/inert'
+// Only the broken-icon handler is shared; iconUrl stays local for the reason
+// documented below.
+import { hideBrokenIcon } from './fleet/shared'
 
 // Icons are PLAIN RUNTIME STRINGS, resolved document-relative at render
 // time (`./icons/<file>` -> `iconUrl()` below) -- NOT ES-module asset
@@ -325,7 +328,7 @@ function TileFrame({
       onClick={onClick}
       className={`relative flex flex-col items-center justify-end overflow-hidden text-center ${tappable ? 'active:brightness-90' : ''} ${borderClass}`}
     >
-      <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />
+      <img src={iconUrl(art)} alt="" onError={hideBrokenIcon} style={FILL_STYLE} className="h-full w-full object-cover" />
       <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
       <div className="relative w-full px-1 pb-1">{children}</div>
     </div>
@@ -443,7 +446,7 @@ function RouterStatusLine({
     return (
       <div className="flex shrink-0 items-center justify-between border-b border-stone-800 px-2 py-1 text-[11px]">
         <span className="flex items-center">
-          <img src={iconUrl('icon_router_off.png')} alt="" className="mr-1 h-[14px] w-[14px]" />
+          <img src={iconUrl('icon_router_off.png')} alt="" onError={hideBrokenIcon} className="mr-1 h-[14px] w-[14px]" />
           <span className="font-semibold uppercase tracking-wide text-red-400">router unreachable</span>
         </span>
         <span className="truncate text-stone-500">{error ?? 'unknown error'}</span>
@@ -453,7 +456,7 @@ function RouterStatusLine({
   return (
     <div className="flex shrink-0 items-center justify-between border-b border-stone-800 px-2 py-1 text-[11px]">
       <span className="flex items-center">
-        <img src={iconUrl(loaded ? 'icon_router_active.png' : 'icon_router_off.png')} alt="" className="mr-1 h-[14px] w-[14px]" />
+        <img src={iconUrl(loaded ? 'icon_router_active.png' : 'icon_router_off.png')} alt="" onError={hideBrokenIcon} className="mr-1 h-[14px] w-[14px]" />
         <span className="font-semibold uppercase tracking-wide text-stone-300">
           router: <span className={loaded ? 'text-emerald-300' : 'text-stone-500'}>{loaded ?? 'IDLE'}</span>
         </span>

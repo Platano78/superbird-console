@@ -1,5 +1,5 @@
 import type { FleetHost } from '../../deviceInfo'
-import { FILL_STYLE, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets, primaryHost } from './shared'
+import { FILL_STYLE, hideBrokenIcon, hostLoading, iconUrl, isReadyForDuty, isUncensoredLeaf, leafDisplayName, orderedFlipTargets, primaryHost } from './shared'
 import { LEAF_ICONS } from './leafTheme'
 
 
@@ -64,7 +64,7 @@ function LeafTile({ id, active, loading, actionId, isCursor, isPending, isLatche
         onTileTap(actionId)
       }}
     >
-      {art && <img src={iconUrl(art)} alt="" style={FILL_STYLE} className="h-full w-full object-cover" />}
+      {art && <img src={iconUrl(art)} alt="" onError={hideBrokenIcon} style={FILL_STYLE} className="h-full w-full object-cover" />}
       <div style={{ ...FILL_STYLE, background: `rgba(12,10,9,${scrimAlpha})` }} />
       {/* RFD means "available outside the daily rotation", so it is a
           contradiction on the leaf currently ON duty -- leaf-solo showed

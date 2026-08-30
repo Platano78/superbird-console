@@ -43,6 +43,14 @@ export function iconUrl(file: string) {
   return `./icons/${file}`
 }
 
+/** Hide an <img> whose icon file is absent, rather than letting the kiosk draw
+ *  a broken-image glyph over the tile art slot. Icon sets are per-install: a
+ *  fleet that has not supplied its own ships none at all, and every tile then
+ *  falls back to scrim + label, which is legible. Attach to EVERY icon <img>. */
+export function hideBrokenIcon(e: { currentTarget: HTMLImageElement }) {
+  e.currentTarget.hidden = true
+}
+
 // Explicit top/right/bottom/left, not `inset` shorthand.
 export const FILL_STYLE: CSSProperties = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }
 

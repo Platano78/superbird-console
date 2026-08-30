@@ -1,5 +1,5 @@
 import type { FleetStateDoc, MbPcreate } from '../../deviceInfo'
-import { FILL_STYLE, STALE_S, iconUrl, primaryHost } from './shared'
+import { FILL_STYLE, STALE_S, hideBrokenIcon, iconUrl, primaryHost } from './shared'
 
 type Props = {
   doc: FleetStateDoc | null
@@ -48,6 +48,7 @@ export function AuxPage({ doc, pcreate, cursor, pending, onTileTap, isLatched }:
         <img
           src={iconUrl(pcreate.up ? 'icon_mb_pcreate_active.png' : 'icon_mb_pcreate_inactive.png')}
           alt=""
+          onError={hideBrokenIcon}
           style={FILL_STYLE}
           className="h-full w-full object-cover"
         />
